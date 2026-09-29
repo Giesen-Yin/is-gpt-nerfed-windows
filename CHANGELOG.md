@@ -2,12 +2,15 @@
 
 ## 0.5.3 — 2026-09-29
 
+- 0.5.2 picked the wrong codex: any `codex` on PATH won over the one inside the ChatGPT app, so a Mac with an
+  older Homebrew or npm CLI ran every probe through it. The server refuses such a client the desktop's model ("The
+  'gpt-6-astra' model requires a newer version of Codex"), it cannot read the sessions the desktop now saves in its
+  paginated format ("paginated_threads is not supported yet"), and it does not list the plugin's hooks, so the
+  panel said to run install.sh. When several codex binaries exist, the newest one now runs the probes (issues #10,
+  #11).
 - ChatGPT 26.924 moved the desktop app's codex from `Contents/Resources/codex` to
-  `Contents/Resources/codex-cli/bin/codex`, so 0.5.2 either found no codex at all or fell back to an older CLI on
-  PATH (Homebrew, npm). That older CLI could not read the sessions the desktop now saves in its paginated format
-  ("paginated_threads is not supported yet"), was refused the desktop's model ("requires a newer version of
-  Codex"), and did not list the plugin's hooks, so the panel said to run install.sh. The new location is known
-  now, and when several codex binaries exist the newest one runs the probes (issues #10, #11).
+  `Contents/Resources/codex-cli/bin/codex`, so on a Mac without a codex CLI 0.5.2 found no codex at all. Both
+  locations are known now.
 - `nerfed doctor` shows the codex version, the other codex binaries it found, and warns when the one in use is
   older than the Codex that saved your latest session. Probe reports say which codex version ran them.
 - The fresh-session probe no longer insists on the OpenAI provider: it gets whatever a new session of yours gets,
