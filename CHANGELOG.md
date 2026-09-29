@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.3 — 2026-09-29
+
+- ChatGPT 26.924 moved the desktop app's codex from `Contents/Resources/codex` to
+  `Contents/Resources/codex-cli/bin/codex`, so 0.5.2 either found no codex at all or fell back to an older CLI on
+  PATH (Homebrew, npm). That older CLI could not read the sessions the desktop now saves in its paginated format
+  ("paginated_threads is not supported yet"), was refused the desktop's model ("requires a newer version of
+  Codex"), and did not list the plugin's hooks, so the panel said to run install.sh. The new location is known
+  now, and when several codex binaries exist the newest one runs the probes (issues #10, #11).
+- `nerfed doctor` shows the codex version, the other codex binaries it found, and warns when the one in use is
+  older than the Codex that saved your latest session. Probe reports say which codex version ran them.
+- The fresh-session probe no longer insists on the OpenAI provider: it gets whatever a new session of yours gets,
+  so a relay set up in config.toml (for example by cc-switch) is checked as well.
+- The hook status is checked again as soon as a different codex binary is in use, instead of showing the old
+  answer for up to 15 minutes.
+
 ## 0.5.2 — 2026-09-25
 
 - The fingerprint bank now knows gpt-6-sol, gpt-6-luna and claude-opus-5-5 (ModelTrace's 2026-09-23 bank). Sessions

@@ -1,6 +1,6 @@
 {
   "name": "is-gpt-nerfed",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "Transparent, user-controlled detection of silent model downgrades in Codex sessions: a zero-token passive scan of the session rollout on every turn, plus ModelTrace fingerprint probes run in ephemeral forks of the thread (the mechanism behind /side) on a schedule you choose. Verdicts are delivered as a snarky card.",
   "author": {
     "name": "is-gpt-nerfed contributors"

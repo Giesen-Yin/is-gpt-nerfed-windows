@@ -18,7 +18,7 @@ import threading
 import time
 import uuid
 
-CLIENT_INFO = {"name": "is-gpt-nerfed", "version": "0.5.2"}
+CLIENT_INFO = {"name": "is-gpt-nerfed", "version": "0.5.3"}
 FINISHED_TURN = ("completed", "interrupted", "failed")
 MESSAGE_ITEMS = ("userMessage", "agentMessage", "reasoning", "hookPrompt")
 
