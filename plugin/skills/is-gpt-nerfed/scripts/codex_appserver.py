@@ -493,10 +493,11 @@ def start_ephemeral(app: AppServer, model: str, effort: str | None, provider: st
             "service_tier": response.get("serviceTier"), "originator": thread.get("originator")}
 
 
-def probe_fresh(codex_bin: str, model: str, effort: str | None = None, provider: str | None = "openai", cwd: str | None = None,
+def probe_fresh(codex_bin: str, model: str, effort: str | None = None, provider: str | None = None, cwd: str | None = None,
                 queries: int = 3, languages=("zh", "en"), timeout_s: float = 180, parallel: bool = True,
                 rng: random.Random | None = None, originator: str | None = None) -> dict:
-    """Global probe: `queries` brand-new ephemeral sessions (no conversation context), one text-only turn each."""
+    """Global probe: `queries` brand-new ephemeral sessions (no conversation context), one text-only turn each. With no
+    `provider` Codex picks the one a new session of the user's gets (config.toml's model_provider, e.g. a relay)."""
     rng = rng or random.Random()
     cwd = cwd or os.path.expanduser("~")
     t0 = time.time()
@@ -516,7 +517,8 @@ def probe_fresh(codex_bin: str, model: str, effort: str | None = None, provider:
         app.close()
     return {
         "originator": originator,
-        "thread": {"id": None, "model": forks[0]["model"] if forks else model, "provider": provider, "effort": forks[0].get("effort") if forks else effort,
+        "thread": {"id": None, "model": forks[0]["model"] if forks else model, "provider": (forks[0].get("provider") if forks else None) or provider,
+                   "effort": forks[0].get("effort") if forks else effort,
                    "cwd": cwd, "path": None, "name": "fresh session", "last_turn": None},
         "forks": [{k: v for k, v in f.items() if k != "prompt"} for f in forks],
         "elapsed_s": round(time.time() - t0, 1), "parallel": parallel, "server_requests": len(app.server_requests),

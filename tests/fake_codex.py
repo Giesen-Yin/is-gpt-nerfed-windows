@@ -16,6 +16,7 @@ controlled by environment variables:
                           "wait": the only turn is live while FAKE_CODEX_BUSY_UNTIL exists; finished afterwards
   FAKE_CODEX_TRUST_FILE=p JSON file holding trusted hook hashes; enables hooks/list + config/batchWrite
   FAKE_CODEX_LOG=path     append every received message here
+  FAKE_CODEX_VERSION      what `--version` reports (default 0.158.0)
 """
 import json
 import os
@@ -70,6 +71,9 @@ def trusted_hashes():
 
 
 def main():
+    if "--version" in sys.argv:
+        print("codex-cli " + os.environ.get("FAKE_CODEX_VERSION", "0.158.0"))
+        return
     marker = os.environ.get("FAKE_CODEX_FAIL_ONCE")
     if marker and os.path.exists(marker):  # simulate one transport failure: die before answering anything
         os.remove(marker)
@@ -130,7 +134,7 @@ def main():
             forks[fid] = params
             send({"id": rid, "result": {"thread": {"id": fid, "ephemeral": bool(params.get("ephemeral", True)), "originator": originator,
                                                    "cwd": params.get("cwd"), "model": params.get("model")},
-                                        "model": params.get("model"), "modelProvider": params.get("modelProvider"),
+                                        "model": params.get("model"), "modelProvider": params.get("modelProvider") or "openai",
                                         "reasoningEffort": (params.get("config") or {}).get("model_reasoning_effort"),
                                         "cwd": params.get("cwd"), "serviceTier": None}})
         elif method == "turn/start":

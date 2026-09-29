@@ -55,6 +55,7 @@ WORKER_LOG = os.path.join(NERFED_HOME, "worker.log")
 LOG_PATH = os.path.join(NERFED_HOME, "log.jsonl")            # structured activity log (nerfed log)
 ACCOUNT_PATH = os.path.join(NERFED_HOME, "account.json")     # last seen Codex account (hash, masked label)
 HOOKS_STATUS_PATH = os.path.join(NERFED_HOME, "hooks_status.json")
+CODEX_VERSIONS_PATH = os.path.join(NERFED_HOME, "codex_versions.json")
 UPDATE_PATH = os.path.join(NERFED_HOME, "update.json")
 RELEASES_API = "https://api.github.com/repos/kiyoakii/is-gpt-nerfed/releases/latest"
 RELEASES_URL = "https://github.com/kiyoakii/is-gpt-nerfed/releases"
@@ -67,9 +68,11 @@ PLUGIN_NAME = "is-gpt-nerfed"
 MARKETPLACE_NAME = "is-gpt-nerfed"
 SKILL_CMD = "$is-gpt-nerfed"
 SIDE_CMD = "/side $is-gpt-nerfed"
-APP_CODEX_BINS = [
-    "/Applications/ChatGPT.app/Contents/Resources/codex",
-    "/Applications/Codex.app/Contents/Resources/codex",
+APP_CODEX_BINS = [  # the desktop app's own codex: Resources/codex-cli/bin/codex since ChatGPT 26.924, Resources/codex before
+    os.path.join(apps, app, "Contents", "Resources", rel)
+    for apps in ("/Applications", os.path.expanduser("~/Applications"))
+    for app in ("ChatGPT.app", "Codex.app")
+    for rel in ("codex-cli/bin/codex", "codex")
 ]
 CODEX_NOTIFICATION_WAV = "/Applications/ChatGPT.app/Contents/Resources/codex-notification.wav"
 
@@ -827,17 +830,65 @@ def is_dgc_command(payload: dict) -> bool:
     return "nerfed" in cmd or "is-gpt-nerfed" in cmd or "dgc" in cmd
 
 
+_CODEX_VERSIONS: dict[str, str | None] = {}
+
+
+def codex_version(path: str | None) -> str | None:
+    """What `codex --version` says ("0.158.0-alpha.2.1"). The panel asks every few seconds, so the answer is kept
+    for ten minutes per binary (and forgotten as soon as the file changes)."""
+    if not path:
+        return None
+    if path not in _CODEX_VERSIONS:
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        stamp = [st.st_mtime_ns, st.st_size]
+        known = read_json(CODEX_VERSIONS_PATH, {}) or {}
+        hit = known.get(path) or {}
+        if hit.get("stamp") == stamp and now() - float(hit.get("ts") or 0) < 600:
+            _CODEX_VERSIONS[path] = hit.get("version")
+        else:
+            try:
+                out = subprocess.run([path, "--version"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10).stdout
+            except Exception:
+                out = ""
+            m = re.search(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?", out)
+            _CODEX_VERSIONS[path] = m.group(0) if m else None
+            with contextlib.suppress(Exception):
+                write_json(CODEX_VERSIONS_PATH, {**known, path: {"version": _CODEX_VERSIONS[path], "stamp": stamp, "ts": now()}})
+    return _CODEX_VERSIONS[path]
+
+
+def codex_version_key(v: str | None) -> tuple:
+    """Orders Codex versions; a release outranks its own alphas (0.158.0 > 0.158.0-alpha.2.1), unknown sorts last."""
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)(?:-(.+))?$", v or "")
+    if not m:
+        return (-1,)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), 0 if m.group(4) else 1,
+            tuple(int(x) for x in re.findall(r"\d+", m.group(4) or "")))
+
+
+def codex_candidates() -> list[str]:
+    """Every codex on this Mac: the ones on PATH, then the desktop app's own, each binary once."""
+    seen, out = set(), []
+    for p in [os.path.join(d, "codex") for d in os.environ.get("PATH", "").split(os.pathsep) if d] + APP_CODEX_BINS:
+        if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) not in seen:
+            seen.add(os.path.realpath(p))
+            out.append(p)
+    return out
+
+
 def codex_bin(cfg: dict | None = None) -> str | None:
+    """The configured codex, else the newest one found. An old CLI left on PATH (Homebrew, npm) cannot read the
+    sessions a newer desktop app saved, and the server refuses it newer models, so the newest has to win."""
     cfg = cfg or load_config()
     if cfg.get("codex_bin") and os.path.exists(cfg["codex_bin"]):
         return cfg["codex_bin"]
-    w = shutil.which("codex")
-    if w:
-        return w
-    for p in APP_CODEX_BINS:
-        if os.path.exists(p):
-            return p
-    return None
+    found = codex_candidates()
+    if len(found) > 1:
+        return max(found, key=lambda p: codex_version_key(codex_version(p)))
+    return found[0] if found else None
 
 
 # --------------------------------------------------------------------------------------- the pet
@@ -1089,7 +1140,7 @@ def finalize_probe(rec: dict, outputs: list[dict], expected: str | None, errors:
               errors=errors[:3] or None)
     facts = [f"probe {rec['id']}  ·  session {rec.get('thread_id') or '?'}  ·  mode {rec.get('mode')}  ·  {n}/{q} answers used"
              + (f" in {rec['rounds']} rounds" if rec.get("rounds", 1) > 1 else "") + (f"  ·  retried ×{rec['retries']}" if rec.get("retries") else "")
-             + f"  ·  {rec['elapsed_s']}s",
+             + f"  ·  {rec['elapsed_s']}s" + (f"  ·  codex {rec['codex']}" if rec.get("codex") else ""),
              f"expected {expected or '?'}" + (f" {p_exp:.0%}" if analysis and a.get("p_expected") is not None else "")
              + f"  ·  fingerprint {top or '?'}" + (f" {p:.0%}" if analysis else "")
              + (f"  ·  margin {a['margin']:+.2f}σ" if a.get("margin") is not None else "")
@@ -1175,6 +1226,7 @@ def run_fork_probe(thread_id: str, cfg: dict, queries: int | None = None, quiet:
     row = db_thread(thread_id) or {}
     orig = resolve_originator(cfg, cb, row, originator)
     rec["originator"] = orig
+    rec["codex"] = codex_version(cb)
     write_json(probe_path(rec["id"]), rec)
     log_event("probe_originator", probe=rec["id"], sid=thread_id, originator=orig)
     hints = {"model": row.get("model"), "effort": row.get("reasoning_effort"), "cwd": row.get("cwd")}
@@ -1309,6 +1361,7 @@ def run_fresh_probe(cfg: dict, model: str | None = None, effort: str | None = No
 
     orig = resolve_originator(cfg, cb, None, originator)
     rec["originator"] = orig
+    rec["codex"] = codex_version(cb)
     write_json(probe_path(rec["id"]), rec)
     log_event("probe_originator", probe=rec["id"], mode="fresh", originator=orig)
 
@@ -2462,23 +2515,26 @@ def hooks_status(cfg: dict, max_age_s: float = 900, force: bool = False) -> dict
     """Trust state of the plugin's hooks as Codex sees them (hooks/list), cached for `max_age_s`, plus whether
     the desktop app has ever fired one of them (a hook event whose thread was created by Codex Desktop)."""
     cached = read_json(HOOKS_STATUS_PATH, {}) or {}
-    fresh = cached.get("checked_ts") and (now() - float(cached["checked_ts"])) < max_age_s
+    cb = codex_bin(cfg)
+    fresh = cached.get("checked_ts") and (now() - float(cached["checked_ts"])) < max_age_s and cached.get("bin") == cb
     if force or not fresh:
-        cb = codex_bin(cfg)
-        if cb:
+        if not cb:
+            cached = {**cached, "checked_ts": now(), "checked": iso(), "bin": None, "error": "codex binary not found", "state": "unknown"}
+            write_json(HOOKS_STATUS_PATH, cached)
+        else:
             try:
                 listed = cas.list_plugin_hooks(cb, PLUGIN_NAME)
                 hooks, notes = listed["hooks"], listed["notes"]
                 trusted = sum(1 for h in hooks if h.get("trustStatus") == "trusted")
                 disabled = sum(1 for h in hooks if h.get("enabled") is False)
-                cached = {"checked_ts": now(), "checked": iso(), "total": len(hooks), "trusted": trusted, "untrusted": len(hooks) - trusted,
+                cached = {"checked_ts": now(), "checked": iso(), "bin": cb, "total": len(hooks), "trusted": trusted, "untrusted": len(hooks) - trusted,
                           "disabled": disabled, "notes": notes[:6],
                           "hooks": [{"event": h.get("eventName"), "status": h.get("trustStatus"), "key": h.get("key"),
                                      "hash": h.get("currentHash"), "enabled": h.get("enabled"), "plugin": h.get("pluginId")} for h in hooks],
                           "error": None}
                 cached["state"] = "missing" if not hooks else ("trusted" if trusted == len(hooks) else "untrusted")
             except Exception as e:
-                cached = {**cached, "checked_ts": now(), "checked": iso(), "error": str(e)[:200], "state": cached.get("state") or "unknown"}
+                cached = {**cached, "checked_ts": now(), "checked": iso(), "bin": cb, "error": str(e)[:200], "state": cached.get("state") or "unknown"}
             write_json(HOOKS_STATUS_PATH, cached)
     # desktop evidence: hook events whose thread the Codex Desktop app created
     last_desktop = None
@@ -2611,7 +2667,7 @@ def cmd_explain(args) -> int:
     if not rec:
         raise SystemExit("unknown probe id")
     print(f"probe {rec['id']}  mode={rec.get('mode')}  status={rec.get('status')}  started={rec.get('started')}  finished={rec.get('finished')}")
-    print(f"identified as {rec.get('originator') or '(clientInfo name)'}")
+    print(f"identified as {rec.get('originator') or '(clientInfo name)'}" + (f"  ·  codex {rec['codex']}" if rec.get("codex") else ""))
     print(f"session {rec.get('thread_id')}  expected {rec.get('expected')}  →  fingerprint {rec.get('prediction')} "
           f"({(rec.get('probability') or 0) * 100:.1f}%)  verdict {rec.get('verdict')} {rec.get('direction') or ''}")
     if rec.get("calibration"):
@@ -2951,7 +3007,14 @@ def cmd_doctor(args) -> int:
     check(sys.version_info >= (3, 9), f"python {sys.version.split()[0]}", "needs Python 3.9+")
     check(os.path.isdir(CODEX_HOME), f"CODEX_HOME {CODEX_HOME}", "Codex not installed?")
     cb = codex_bin(cfg)
-    check(bool(cb), f"codex binary: {cb or 'not found'}", "set config codex_bin or put codex on PATH")
+    check(bool(cb), f"codex binary: {cb or 'not found'}" + (f" ({codex_version(cb) or 'version unknown'})" if cb else ""),
+          "set config codex_bin or put codex on PATH")
+    for other in (p for p in codex_candidates() if cb and os.path.realpath(p) != os.path.realpath(cb)):
+        print(f"     also found {other} ({codex_version(other) or 'version unknown'}), not used")
+    saved = (db_query("SELECT cli_version FROM threads WHERE cli_version != '' ORDER BY updated_at DESC LIMIT 1") or [{}])[0].get("cli_version")
+    if cb and saved and codex_version_key(codex_version(cb)) < codex_version_key(saved):
+        print(f"  ⚠️  codex {codex_version(cb)} is older than the Codex that saved your latest session ({saved}); probes may be "
+              "refused → update it, or unset codex_bin")
     check(os.path.exists(os.path.join(SKILL_DIR, "SKILL.md")), f"skill {os.path.join(SKILL_DIR, 'SKILL.md')}")
     prov = read_json(os.path.join(PLUGIN_ROOT, "assets", "modeltrace", "provenance.json"), {}) or {}
     bank_ok = os.path.exists(BANK_PATH)

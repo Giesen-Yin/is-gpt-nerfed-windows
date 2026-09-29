@@ -148,7 +148,7 @@ The app also logs to the unified log (Console.app, subsystem `is-gpt-nerfed`).
 | `busy_wait_s` | `600` | how long to wait for a live turn |
 | `hide_titles` | `false` | screenshot mode |
 | `check_updates` | `true` | ask GitHub for a newer release every 10 minutes |
-| `codex_bin` | auto | path to the codex binary (found on PATH or inside the ChatGPT/Codex app) |
+| `codex_bin` | auto | path to the codex binary (auto: the newest one on PATH or inside the ChatGPT/Codex app) |
 
 ## Release
 

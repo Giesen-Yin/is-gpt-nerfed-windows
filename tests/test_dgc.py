@@ -377,6 +377,7 @@ class ForkProbeTests(unittest.TestCase):
         snap = json.loads(run_cli(["snapshot", "--json"], env)[1])
         self.assertEqual(snap["hooks"]["state"], "trusted")
         self.assertEqual(snap["hooks"]["trusted"], 5)
+        self.assertEqual(dgc.read_json(dgc.HOOKS_STATUS_PATH)["bin"], FAKE_CODEX, "a different codex asks again")
         rc, out = run_cli(["log", "--kind", "hooks_trust"])
         self.assertIn("hooks_trust", out)
         os.remove(dgc.HOOKS_STATUS_PATH)
@@ -772,6 +773,37 @@ class SnapshotReportTests(unittest.TestCase):
         self.assertEqual(rec["originator"], "Codex Desktop")
         self.assertEqual(rec["forks"][0].get("originator"), "Codex Desktop", "the fake server saw the override, as the real codex would")
         self.assertIn("as Codex Desktop", dgc.probe_line(dgc.probe_summary({"id": rec["id"], "verdict": "MATCH"})))
+        self.assertEqual(rec["codex"], "0.158.0", "the probe records which codex ran it")
+        self.assertEqual(rec["thread"]["provider"], "openai", "no provider asked for: Codex's own default (config.toml's, e.g. a relay)")
+
+    def test_the_newest_codex_runs_the_probes(self):
+        """The desktop moved its codex to Resources/codex-cli/bin/codex; an old CLI on PATH then won and could neither
+        read the sessions the desktop saved (paginated_threads) nor use its model (#10, #11)."""
+        d = tempfile.mkdtemp(dir=TMP)
+
+        def fake(name, version):
+            path = os.path.join(d, name, "codex")
+            os.makedirs(os.path.dirname(path))
+            with open(path, "w") as f:
+                f.write(f"#!/bin/sh\necho 'codex-cli {version}'\n")
+            os.chmod(path, 0o755)
+            return path
+
+        old, app = fake("brew", "0.150.0"), fake("app", "0.158.0-alpha.2.1")
+        dgc._CODEX_VERSIONS.clear()
+        with mock.patch.object(dgc, "APP_CODEX_BINS", [app]), mock.patch.dict(os.environ, {"PATH": os.path.dirname(old)}):
+            self.assertEqual(dgc.codex_candidates(), [old, app])
+            self.assertEqual(dgc.codex_bin({"codex_bin": None}), app)
+            self.assertEqual(dgc.codex_bin({"codex_bin": old}), old, "an explicit choice still wins")
+        with mock.patch.object(dgc, "APP_CODEX_BINS", []), mock.patch.dict(os.environ, {"PATH": os.path.dirname(old)}):
+            self.assertEqual(dgc.codex_bin({"codex_bin": None}), old)
+        self.assertEqual(dgc.codex_version(app), "0.158.0-alpha.2.1")
+        self.assertIn("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex", dgc.APP_CODEX_BINS)
+        key = dgc.codex_version_key
+        self.assertGreater(key("0.158.0"), key("0.158.0-alpha.2.1"))
+        self.assertGreater(key("0.158.0-alpha.10"), key("0.158.0-alpha.9.2"))
+        self.assertGreater(key("0.158.0-alpha.2.1"), key("0.99.0"))
+        self.assertLess(key(None), key("0.1.0"))
 
     def test_update_check_status_and_versions(self):
         self.assertEqual(dgc.version_tuple("v0.4.2"), (0, 4, 2))
