@@ -84,6 +84,8 @@ Automatic app updates are disabled: this fork must not install upstream macOS as
 [hlwy-ai-checker](https://github.com/hanlinwenyuan/hlwy-ai-checker) for the random-number probing idea;
 [simple-term-menu](https://github.com/IngoMeyer441/simple-term-menu) (MIT) for the original project's terminal session picker (replaced by a Windows-compatible selector here).
 
+Thanks also to [OpenAI Codex](https://developers.openai.com/codex/) for its contributions to the Windows adaptation, frontend implementation, debugging, automated tests, code review, documentation and release preparation.
+
 ## License and attribution
 
 Project code, including Windows modifications, is **MIT**; the original copyright notice is retained in [LICENSE](LICENSE). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for upstream, ModelTrace and bundled component credits. Runtime dependencies retain their own licenses; this project does not relicense them. [ModelTrace provenance](plugin/assets/modeltrace/provenance.json), its bank and calibrated prompts are preserved.

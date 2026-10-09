@@ -76,6 +76,8 @@ EXE 可直接读取会话和手动检测，**不依赖预先安装 hooks**。hoo
 感谢 [hlwy-ai-checker](https://github.com/hanlinwenyuan/hlwy-ai-checker) 提供随机数检测的思路；
 感谢 [simple-term-menu](https://github.com/IngoMeyer441/simple-term-menu)（MIT）为原项目提供终端会话选择器（本分支已替换为 Windows 兼容实现）。
 
+同时感谢 [OpenAI Codex](https://developers.openai.com/codex/) 在 Windows 适配、前端实现、问题排查、自动化测试、代码审核、文档编写和发布准备中的协助与贡献。
+
 ## 协议与来源
 
 项目代码及 Windows 修改继续使用 **MIT**，在 [LICENSE](LICENSE) 中完整保留原版权声明。[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 记录上游、ModelTrace 和打包组件来源。运行时依赖保留各自协议，本项目不对它们重新授权。保留 [ModelTrace 来源记录](plugin/assets/modeltrace/provenance.json)、指纹库和校准提示词。
