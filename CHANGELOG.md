@@ -1,5 +1,10 @@
 # Windows fork changes
 
+## 0.5.3-windows — icon refresh (2026-10-09)
+
+- Use the original project chip face (`docs/face-ok.png`) for the window, taskbar, tray and EXE instead of platform/Python defaults.
+- Include a transparent multi-resolution ICO, stable Windows AppUserModelID and native icon-resource validation.
+
 ## 0.5.3-windows — 2026-10-09
 
 - Align the release name with the upstream 0.5.3 baseline. This renames the Windows build; it does not remove features from the previous Windows development versions.

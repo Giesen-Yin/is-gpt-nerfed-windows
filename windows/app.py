@@ -18,6 +18,8 @@ from tkinter import ttk, messagebox, filedialog
 FROZEN = bool(getattr(sys, 'frozen', False))
 ROOT = Path(sys._MEIPASS) if FROZEN else Path(__file__).resolve().parents[1]
 CLI = ROOT / 'plugin/skills/is-gpt-nerfed/scripts/nerfed'
+ICON_PATH = ROOT / 'windows/assets/chip.ico'
+APP_ID = 'IsGPTNerfed.Windows'
 BG, CARD, INK, MUTED = '#ffffff', '#f4f4f5', '#252525', '#828282'
 GREEN, RED, AMBER = '#26b95a', '#ff424c', '#ef921f'
 FRONTEND_VERSION = json.loads((ROOT / 'plugin/.codex-plugin/plugin.json').read_text(encoding='utf-8'))['version']
@@ -132,7 +134,15 @@ class Backend:
 
 class Panel(tk.Tk):
     def __init__(self, demo=False):
+        if os.name == 'nt':
+            import ctypes
+            shell = ctypes.WinDLL('shell32')
+            shell.SetCurrentProcessExplicitAppUserModelID.argtypes = [ctypes.c_wchar_p]
+            shell.SetCurrentProcessExplicitAppUserModelID.restype = ctypes.c_long
+            shell.SetCurrentProcessExplicitAppUserModelID(APP_ID)
         super().__init__()
+        self.iconbitmap(default=str(ICON_PATH))
+        self.iconbitmap(str(ICON_PATH))
         self.title('Is GPT nerfed? · Windows')
         self.geometry('820x900')
         self.minsize(620, 580)
@@ -233,7 +243,7 @@ class Panel(tk.Tk):
         if self.tray is None:
             from tray import Tray
             self.tray = Tray(lambda action: self.results.put(('tray', action, None, None)),
-                             lambda: [self.t(k) for k in ('open','settings','quit')])
+                             lambda: [self.t(k) for k in ('open','settings','quit')], ICON_PATH)
 
     def close(self):
         if self.prefs.values['background']:
@@ -529,6 +539,11 @@ def main():
     smoke_ok=False
     if args.smoke_test:
         deadline=time.monotonic()+40
+        def smoke_error(exc_type, value, tb):
+            import traceback
+            traceback.print_exception(exc_type, value, tb)
+            app.quit_app()
+        app.report_callback_exception=smoke_error
         def check():
             nonlocal smoke_ok
             if app.loading and time.monotonic()<deadline: app.after(100,check); return
@@ -539,6 +554,16 @@ def main():
                 for child in app.winfo_children():
                     if isinstance(child,tk.Toplevel): child.destroy()
             app.ensure_tray()
+            assert app.tray.icon_handle and app.tray.icon_path == ICON_PATH.resolve()
+            # WM_GETICON on the real top-level HWND verifies the window/taskbar icon, not just a path setting.
+            import ctypes
+            from ctypes import wintypes
+            user=ctypes.WinDLL('user32')
+            user.GetAncestor.argtypes=[wintypes.HWND,wintypes.UINT]; user.GetAncestor.restype=wintypes.HWND
+            user.SendMessageW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM]
+            user.SendMessageW.restype=ctypes.c_ssize_t
+            hwnd=user.GetAncestor(app.winfo_id(),2)
+            assert user.SendMessageW(hwnd,0x7f,1,0), 'Taskbar/window icon was not assigned'
             app.prefs.values['background']=True
             app.close(); app.update(); assert app.state()=='withdrawn'
             app.show(); app.update(); assert app.state()!='withdrawn'

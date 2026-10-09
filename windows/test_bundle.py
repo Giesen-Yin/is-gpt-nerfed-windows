@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import struct
 
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
@@ -14,6 +15,28 @@ parser.add_argument('--live', action='store_true', help='Read real Codex session
 args = parser.parse_args()
 source = args.bundle.resolve()
 results = {}
+# Verify EXE icon resources contain the exact supplied ICO frames, not the PyInstaller defaults.
+import pefile
+ico=(ROOT/'windows/assets/chip.ico').read_bytes()
+count=struct.unpack_from('<H',ico,4)[0]
+frames=[]
+for i in range(count):
+    length,offset=struct.unpack_from('<II',ico,6+16*i+8)
+    frames.append(ico[offset:offset+length])
+for name in ('IsGPTNerfed.exe','nerfed-backend.exe'):
+    pe=pefile.PE(str(source/name))
+    try:
+        resources=[]
+        for entry in pe.DIRECTORY_ENTRY_RESOURCE.entries:
+            if entry.id==3:
+                for icon in entry.directory.entries:
+                    for language in icon.directory.entries:
+                        data=language.data.struct
+                        resources.append(pe.get_data(data.OffsetToData,data.Size))
+        assert set(frames).issubset(set(resources)), 'Project icon missing from '+name
+    finally: pe.close()
+results['exe_icon_resources']='PASS: original project face, all 7 sizes'
+
 with tempfile.TemporaryDirectory(prefix='nerfed exe 中文 ') as tmp:
     folder = Path(tmp) / '便携 application'
     shutil.copytree(source, folder)
@@ -50,7 +73,7 @@ with tempfile.TemporaryDirectory(prefix='nerfed exe 中文 ') as tmp:
         results['app_server_hooks'] = run(['hooks', 'status'])[-1000:]
     gui = subprocess.run([str(folder/'IsGPTNerfed.exe'), '--smoke-test'], env=env, cwd=tmp, timeout=60)
     assert gui.returncode == 0, gui.returncode
-    results['gui_bilingual_resize_tray_details_settings'] = 'PASS'
+    results['gui_window_taskbar_tray_icons_and_controls'] = 'PASS'
     results['relocation_without_python_on_path'] = 'PASS'
 report = ROOT / 'dist/packaging-test.json'
 report.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding='utf8')

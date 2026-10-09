@@ -3,10 +3,15 @@ import ctypes as c
 from ctypes import wintypes as w
 import os
 import threading
+from pathlib import Path
 
 class Tray:
-    def __init__(self, callback, labels):
+    def __init__(self, callback, labels, icon_path):
         self.callback, self.labels = callback, labels
+        self.icon_path = Path(icon_path).resolve()
+        self.icon_handle = None
+        if not self.icon_path.is_file():
+            raise FileNotFoundError(self.icon_path)
         self.ready = threading.Event()
         self.hwnd = None
         self.error = None
@@ -46,7 +51,10 @@ class Tray:
         user.PostMessageW.argtypes=[w.HWND,w.UINT,w.WPARAM,w.LPARAM]
         user.DestroyWindow.argtypes=[w.HWND]
         user.SetForegroundWindow.argtypes=[w.HWND]
-        user.LoadIconW.argtypes=[w.HINSTANCE,c.c_void_p]; user.LoadIconW.restype=w.HICON
+        user.LoadImageW.argtypes=[w.HINSTANCE,w.LPCWSTR,w.UINT,c.c_int,c.c_int,w.UINT]
+        user.LoadImageW.restype=w.HICON
+        user.DestroyIcon.argtypes=[w.HICON]
+        user.GetSystemMetrics.argtypes=[c.c_int]; user.GetSystemMetrics.restype=c.c_int
         user.CreatePopupMenu.restype=w.HMENU
         user.AppendMenuW.argtypes=[w.HMENU,w.UINT,c.c_size_t,w.LPCWSTR]
         user.TrackPopupMenu.argtypes=[w.HMENU,w.UINT,c.c_int,c.c_int,c.c_int,w.HWND,c.c_void_p]; user.TrackPopupMenu.restype=w.UINT
@@ -88,14 +96,19 @@ class Tray:
         self.proc = PROC(proc)
         instance=kernel.GetModuleHandleW(None)
         name=f'IsGPTNerfedTray{os.getpid()}-{id(self)}'
-        cls=WNDCLASS(); cls.proc=self.proc; cls.instance=instance; cls.name=name
-        if not user.RegisterClassW(c.byref(cls)): raise c.WinError(c.get_last_error())
+        self.icon_handle=user.LoadImageW(None,str(self.icon_path),1,user.GetSystemMetrics(49),user.GetSystemMetrics(50),0x10)
+        if not self.icon_handle: raise c.WinError(c.get_last_error())
+        cls=WNDCLASS(); cls.proc=self.proc; cls.instance=instance; cls.name=name; cls.icon=self.icon_handle
+        if not user.RegisterClassW(c.byref(cls)):
+            error=c.get_last_error()
+            user.DestroyIcon(self.icon_handle); self.icon_handle=None
+            raise c.WinError(error)
         try:
             self.hwnd=user.CreateWindowExW(0,name,name,0,0,0,0,0,None,None,instance,None)
             if not self.hwnd: raise c.WinError(c.get_last_error())
             notification.size=c.sizeof(NOTIFY); notification.hwnd=self.hwnd; notification.id=1
             notification.flags=1|2|4; notification.message=callback_msg
-            notification.icon=user.LoadIconW(None,c.c_void_p(32512)); notification.tip='Is GPT nerfed?'
+            notification.icon=self.icon_handle; notification.tip='Is GPT nerfed?'
             if not shell.Shell_NotifyIconW(0,c.byref(notification)): raise RuntimeError('Shell_NotifyIcon failed')
             self.ready.set()
             msg=w.MSG()
@@ -107,3 +120,6 @@ class Tray:
                 user.DestroyWindow(self.hwnd)
                 self.hwnd=None
             user.UnregisterClassW(name,instance)
+            if self.icon_handle:
+                user.DestroyIcon(self.icon_handle)
+                self.icon_handle=None

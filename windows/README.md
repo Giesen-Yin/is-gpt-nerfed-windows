@@ -31,3 +31,5 @@ It registers/trusts only in a disposable CODEX_HOME, copies no auth, starts no i
 the original bundle with no Python on PATH, and checks reinstall/config preservation. Never substitute your real CODEX_HOME for this test.
 
 Source hooks support python.exe or the py launcher and recover from stale plugin roots. Both launch paths fail open if the interpreter/script is missing or cannot start. See [change history](../CHANGELOG.md).
+
+Window/taskbar/tray/EXE icons use `assets/chip.ico`, generated from the original `docs/face-ok.png` by `windows/build_icon.ps1`. The icon-refresh ZIP is published as a separate asset so the original release checksum remains valid.

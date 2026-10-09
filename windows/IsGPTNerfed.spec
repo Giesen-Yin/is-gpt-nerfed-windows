@@ -29,12 +29,13 @@ data = [(str(p), str(p.parent.relative_to(root))) for p in (root / 'plugin').rgl
         if p.is_file() and '__pycache__' not in p.parts and p.suffix != '.pyc']
 data += [(str(root / f'docs/face-{state}.png'), 'docs') for state in ('ok', 'warn', 'alert')]
 data += [(str(root / 'LICENSE'), '.')]
+data += [(str(root / 'windows/assets/chip.ico'), 'windows/assets')]
 data += [(str(root / 'THIRD_PARTY_NOTICES.md'), '.')]
 data += [(str(p), 'licenses') for p in (root/'windows/licenses').glob('*.txt')]
 backend = Analysis([str(scripts / 'nerfed')], pathex=[str(scripts)], datas=data, hiddenimports=['sqlite3', 'winsound'], excludes=['pytest', 'IPython', 'numpy', 'pandas'])
 bpyz = PYZ(backend.pure)
-bexe = EXE(bpyz, backend.scripts, [], exclude_binaries=True, name='nerfed-backend', version=version_info('nerfed-backend.exe'), console=True, upx=False)
+bexe = EXE(bpyz, backend.scripts, [], exclude_binaries=True, name='nerfed-backend', icon=str(root/'windows/assets/chip.ico'), version=version_info('nerfed-backend.exe'), console=True, upx=False)
 gui = Analysis([str(root / 'windows/app.py')], pathex=[str(root / 'windows')], excludes=['pytest', 'IPython', 'numpy', 'pandas'])
 gpyz = PYZ(gui.pure)
-gexe = EXE(gpyz, gui.scripts, [], exclude_binaries=True, name='IsGPTNerfed', version=version_info('IsGPTNerfed.exe'), console=False, upx=False)
+gexe = EXE(gpyz, gui.scripts, [], exclude_binaries=True, name='IsGPTNerfed', icon=str(root/'windows/assets/chip.ico'), version=version_info('IsGPTNerfed.exe'), console=False, upx=False)
 app = COLLECT(gexe, bexe, gui.binaries, backend.binaries, gui.datas, backend.datas, name='IsGPTNerfed', upx=False)
