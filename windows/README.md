@@ -1,6 +1,6 @@
 # Windows portable app
 
-The Windows version follows `plugin/.codex-plugin/plugin.json` (currently 0.5.8).
+The Windows version follows `plugin/.codex-plugin/plugin.json` (currently 0.5.3-windows).
 See [English README](../README.md) / [中文说明](../README.zh-CN.md) for operation, reminders and tray settings.
 For macOS use https://github.com/kiyoakii/is-gpt-nerfed.
 
@@ -24,7 +24,7 @@ Legacy PowerShell installers remain available for source maintenance only.
 For the native registration acceptance test, supply an explicit Codex executable:
 
 ```powershell
-python windows/test_installation.py --bundle dist/releases/0.5.8/IsGPTNerfed --codex C:/path/to/codex.exe
+python windows/test_installation.py --bundle dist/releases/0.5.3-windows/IsGPTNerfed --codex C:/path/to/codex.exe
 ```
 
 It registers/trusts only in a disposable CODEX_HOME, copies no auth, starts no inference, verifies all five hooks after moving

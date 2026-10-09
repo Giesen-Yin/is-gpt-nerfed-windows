@@ -9,7 +9,11 @@ version = json.loads((root / 'plugin/.codex-plugin/plugin.json').read_text(encod
 backend_version = re.search(r'^VERSION = "([^"]+)"', (scripts / 'nerfed').read_text(encoding='utf-8'), re.M).group(1)
 if backend_version != version:
     raise ValueError(f'Manifest version {version} differs from backend {backend_version}')
-version_tuple = tuple(map(int, version.split('.'))) + (0,)
+# Windows fixed version fields are numeric; display strings retain the platform suffix.
+match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?", version)
+if not match:
+    raise ValueError(f'Unsupported release version: {version}')
+version_tuple = tuple(map(int, match.groups())) + (0,)
 def version_info(filename):
     return VSVersionInfo(
         ffi=FixedFileInfo(filevers=version_tuple, prodvers=version_tuple, mask=0x3f,

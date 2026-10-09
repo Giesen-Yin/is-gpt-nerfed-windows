@@ -2,7 +2,7 @@
 name: is-gpt-nerfed
 description: Check whether the current Codex session is silently being served by a different (usually cheaper) model than the one selected. Runs ModelTrace fingerprint probes in ephemeral forks of this thread, or answers the probe directly inside a /side conversation, and relays the Codex pet's verdict card. Use when the user invokes $is-gpt-nerfed, asks whether Codex downgraded, rerouted or dumbed down this session, or when a is-gpt-nerfed message says a probe is due or a verdict must be relayed. Not for benchmarking models or evaluating other tools.
 metadata:
-  version: 0.5.8
+  version: 0.5.3-windows
 ---
 
 # is-gpt-nerfed — session integrity probe

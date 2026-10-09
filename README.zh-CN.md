@@ -7,6 +7,8 @@ Windows 仓库：[Giesen-Yin/Is-GPT-Nerfed-ForWindows](https://github.com/Giesen
 本仓库是 [kiyoakii/is-gpt-nerfed](https://github.com/kiyoakii/is-gpt-nerfed) 的 Windows 专用派生版本，保留原版 Python 检测核心与 ModelTrace 归因逻辑。
 **mac 系统请找原仓库：[kiyoakii/is-gpt-nerfed](https://github.com/kiyoakii/is-gpt-nerfed)。** 本仓库不再分发或维护 Swift 应用、DMG 安装器和 macOS 更新器。这是经过修改的 Windows 分支，并非完全相同的镜像，也不是上游官方 Windows 发行版。
 
+当前版本：**0.5.3-windows**，对应原仓库 0.5.3 基线的 Windows 适配版，保留此前已完成的全部 Windows 功能。
+
 ## 相对原仓库的改动类型
 
 | 类型 | Windows 分支改动 |
@@ -66,6 +68,13 @@ EXE 可直接读取会话和手动检测，**不依赖预先安装 hooks**。hoo
 从 `CODEX_HOME`（默认 `%USERPROFILE%\.codex`）读取 Codex 状态。结果和设置写入 `NERFED_HOME`（默认 `CODEX_HOME\is-gpt-nerfed`），其中 `windows-ui.json` 保存语言与后台驻留偏好。读取认证信息仅用于账户哈希和掩码标签。应用不上传本地记录；检测本身是正常的 Codex 推理请求。关闭应用不删除数据。
 
 自动更新已禁用，避免误装上游 macOS 资源。升级时退出应用，再手动替换 Windows 文件夹。GUI、后端、EXE 文件/产品版本和 ZIP 名称统一跟随插件清单版本。详见 [Windows 使用与构建](windows/README.md)、[开发要求](docs/DEVELOPMENT.md)。
+
+## 致谢
+
+感谢 [kiyoakii/is-gpt-nerfed](https://github.com/kiyoakii/is-gpt-nerfed) 原作者及贡献者提供原始项目、检测后端、插件架构和界面设计，本 Windows 分支在此基础上进行适配；
+感谢 [ModelTrace](https://github.com/xqy2006/ModelTrace)（xqy2006，MIT）提供指纹库、评分器、校准提示词及分叉验证流程；
+感谢 [hlwy-ai-checker](https://github.com/hanlinwenyuan/hlwy-ai-checker) 提供随机数检测的思路；
+感谢 [simple-term-menu](https://github.com/IngoMeyer441/simple-term-menu)（MIT）为原项目提供终端会话选择器（本分支已替换为 Windows 兼容实现）。
 
 ## 协议与来源
 

@@ -7,6 +7,8 @@ Windows repository: [Giesen-Yin/Is-GPT-Nerfed-ForWindows](https://github.com/Gie
 Windows-focused fork of [kiyoakii/is-gpt-nerfed](https://github.com/kiyoakii/is-gpt-nerfed), retaining the upstream Python detector and ModelTrace attribution logic.
 **macOS users: please use the original repository, [kiyoakii/is-gpt-nerfed](https://github.com/kiyoakii/is-gpt-nerfed).** This repository does not ship or maintain the original Swift app, DMG installer or macOS updater. It is a modified fork, not an unmodified mirror or an official upstream Windows release.
 
+Current release: **0.5.3-windows** — the Windows adaptation of the 0.5.3 upstream baseline; it retains all previously developed Windows features.
+
 ## Changes from upstream
 
 | Type | Windows fork changes |
@@ -74,6 +76,13 @@ EXE installation does not. Upgrading the GUI does not silently update hooks; cli
 Codex state is read from `CODEX_HOME` (default `%USERPROFILE%\.codex`). Results/settings are stored in `NERFED_HOME` (default `CODEX_HOME\is-gpt-nerfed`); `windows-ui.json` holds language/background preferences. Auth is read only to derive an account hash and masked label. The app does not upload the ledger; actual probes are normal Codex inference requests. Closing the app does not delete data.
 
 Automatic app updates are disabled: this fork must not install upstream macOS assets. Replace the extracted Windows folder manually after quitting the app. The GUI, backend, EXE file/product version and ZIP name share the plugin manifest version. See [Windows usage/build guide](windows/README.md) and [development requirements](docs/DEVELOPMENT.md).
+
+## Credits
+
+[kiyoakii/is-gpt-nerfed](https://github.com/kiyoakii/is-gpt-nerfed) and its contributors for the original project, detection backend, plugin architecture and interface design that this Windows fork builds on;
+[ModelTrace](https://github.com/xqy2006/ModelTrace) (xqy2006, MIT) for the fingerprint bank, scorer, calibrated prompts and fork-and-verify sequence;
+[hlwy-ai-checker](https://github.com/hanlinwenyuan/hlwy-ai-checker) for the random-number probing idea;
+[simple-term-menu](https://github.com/IngoMeyer441/simple-term-menu) (MIT) for the original project's terminal session picker (replaced by a Windows-compatible selector here).
 
 ## License and attribution
 

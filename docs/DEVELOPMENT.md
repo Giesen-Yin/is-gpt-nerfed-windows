@@ -30,8 +30,8 @@ Use Python 3.11+ with Tk. Runtime GUI dependencies are Python standard library o
 5. Hooks must fail open on unexpected errors. Log failures locally. The optional user-enabled halt remains explicit.
    Do not register/trust hooks in the user’s real home, edit global Codex config or call real inference in automated tests. Native installation acceptance tests must use a disposable CODEX_HOME without copied authentication.
 6. Keep English and Chinese READMEs aligned. Document Windows limitations and distinguish this fork from upstream.
-7. Versions come from the plugin manifest. Backend/client/skill, UI, EXE properties and ZIP must agree.
-   Release tags use `vX.Y.Z`; binaries are unsigned unless a real signing certificate is supplied.
+7. Versions come from the plugin manifest. Backend/client/skill, UI, EXE display properties and ZIP must agree. Windows fixed numeric version fields use the three-number base plus a zero revision (0.5.3.0).
+   Windows release tags use `vX.Y.Z-windows` (currently `v0.5.3-windows`); binaries are unsigned unless a real signing certificate is supplied.
 
 ## Windows correctness
 

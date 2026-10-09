@@ -22,8 +22,10 @@ class DocumentationTests(unittest.TestCase):
     def test_readmes_identify_fork_changes_upstream_and_changelog(self):
         for name in ('README.md','README.zh-CN.md'):
             text=(ROOT/name).read_text(encoding='utf8')
-            for required in ('https://github.com/kiyoakii/is-gpt-nerfed','CHANGELOG.md','Added','Changed','Removed','Preserved','MIT'):
+            for required in ('https://github.com/kiyoakii/is-gpt-nerfed','CHANGELOG.md','Added','Changed','Removed','Preserved','MIT','https://github.com/xqy2006/ModelTrace','https://github.com/hanlinwenyuan/hlwy-ai-checker','https://github.com/IngoMeyer441/simple-term-menu'):
                 self.assertIn(required,text,(name,required))
+        self.assertIn('## Credits',(ROOT/'README.md').read_text(encoding='utf8'))
+        self.assertIn('## 致谢',(ROOT/'README.zh-CN.md').read_text(encoding='utf8'))
         self.assertFalse(broken_links(ROOT))
 
     def test_release_documentation_links_resolve(self):

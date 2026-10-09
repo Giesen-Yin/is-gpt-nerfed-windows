@@ -53,7 +53,7 @@ import codex_appserver as cas  # noqa: E402
 import modeltrace_core as core  # noqa: E402
 import windows_integration  # noqa: E402
 
-VERSION = "0.5.8"
+VERSION = "0.5.3-windows"
 DGC_BIN = sys.executable if FROZEN else os.path.abspath(__file__)
 CLI_COMMAND = [sys.executable] if FROZEN else [sys.executable, DGC_BIN]
 SKILL_DIR = os.path.dirname(HERE)

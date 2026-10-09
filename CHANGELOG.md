@@ -1,5 +1,12 @@
 # Windows fork changes
 
+## 0.5.3-windows — 2026-10-09
+
+- Align the release name with the upstream 0.5.3 baseline. This renames the Windows build; it does not remove features from the previous Windows development versions.
+- Add bilingual credits for the original is-gpt-nerfed project and the contributors credited upstream.
+- Keep the suffix in the UI, plugin, CLI, EXE display versions and archive name; use 0.5.3.0 for Windows numeric version fields.
+- Earlier 0.5.6–0.5.8 entries below are retained as Windows development history.
+
 ## 0.5.8 — 2026-10-09
 
 ### Added
