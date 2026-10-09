@@ -1,5 +1,0 @@
-#!/bin/sh
-# Convenience wrapper: ./bin/nerfed <command> → the plugin's CLI
-# Resolve symlinks first: install.sh links this file into ~/.local/bin, and dirname "$0" would otherwise point there.
-SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
-exec "$(cd "$(dirname "$SELF")/.." && pwd)/plugin/skills/is-gpt-nerfed/scripts/nerfed" "$@"

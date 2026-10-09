@@ -1,4 +1,35 @@
-# Changelog
+# Windows fork changes
+
+## 0.5.8 — 2026-10-09
+
+### Added
+- README change-type summaries, upstream baseline/changelog navigation and an independent standards review record.
+- Navigable English/Chinese release documentation and offline documentation-link checks.
+- Regression tests for missing Python, stale plugin roots, pre-main errors and intentional JSON halts.
+
+### Fixed
+- Source and bundled hook launchers consistently fail open on startup failure while preserving explicit JSON halt decisions.
+- Source hooks recover through NERFED_HOME/CODEX_HOME when cached PLUGIN_ROOT no longer exists; the py launcher is supported.
+- Source installer/uninstaller prompts and preflight checks agree on Python 3.11+.
+- Known backend evidence/progress templates are localized only at display time; external text and stored identifiers remain unchanged.
+
+## 0.5.7
+
+- Integrate plugin installation/update, explicit trust, live diagnostics and Codex binary selection into the EXE.
+- Deploy a per-user, content-addressed hooks runtime that survives moving the portable GUI and requires no system Python.
+- Verify the five generated hook commands before trusting them; preflight registration and report native rollback outcomes.
+- Add isolated native installation, no-Python hook execution, Unicode paths and reinstall tests.
+
+## 0.5.6
+
+- Windows-only source layout, MIT/upstream attribution and bilingual README; remove macOS app, installers and self-updater.
+- Chinese/English UI, responsive resizing, native tray with opt-in background residency and explicit Quit.
+- Automatic heartbeat and remind-only settings, fresh probe interval and notification test.
+- Fix Windows byte-range lock offsets, UTF-8 app-server pipes, notification WinRT construction and XML escaping.
+- Preserve probe/scorer contracts; port offline fake-server tests to Windows and add process, visibility, concurrency and scheduling regression tests.
+- Shared manifest/UI/backend/EXE/archive version; source and binary smoke tests.
+
+## Upstream history (retained for attribution/context)
 
 ## 0.5.3 — 2026-09-29
 

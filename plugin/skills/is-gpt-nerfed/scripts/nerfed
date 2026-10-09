@@ -11,7 +11,7 @@ Three layers, all local, nothing leaves the machine:
            fork is asked for a long "random" integer sequence, and the sequences are attributed to a model
            with ModelTrace's calibrated fingerprint bank. Expected model ≠ fingerprint → the pet speaks up.
            Inside a `/side` conversation the model answers the same challenge directly.
-  card     Verdicts arrive as a card, a macOS notification, a system message in the thread and
+  card     Verdicts arrive as a card, a Windows notification, a system message in the thread and
            (optionally) a sound. Optional Guard-style halt: deny work tools after a mismatch until `nerfed resume`.
 
 State lives under $NERFED_HOME (default: $CODEX_HOME/is-gpt-nerfed, i.e. ~/.codex/is-gpt-nerfed).
@@ -21,7 +21,11 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
-import fcntl
+try:
+    import fcntl  # Unix advisory locks
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
 import glob
 import json
 import os
@@ -34,13 +38,24 @@ import sys
 import time
 import uuid
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# Codex cards contain Unicode faces and emoji. Windows consoles still default to a legacy
+# code page in some hosts, so prefer UTF-8 while retaining the host's normal stream behavior.
+if os.name == "nt":
+    for _stream in (sys.stdin, sys.stdout, sys.stderr):
+        with contextlib.suppress(Exception):
+            _stream.reconfigure(encoding="utf-8")
+
+FROZEN = bool(getattr(sys, "frozen", False))
+HERE = (os.path.join(sys._MEIPASS, "plugin", "skills", "is-gpt-nerfed", "scripts")
+        if FROZEN else os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 import codex_appserver as cas  # noqa: E402
 import modeltrace_core as core  # noqa: E402
+import windows_integration  # noqa: E402
 
-VERSION = "0.5.3"
-DGC_BIN = os.path.abspath(__file__)
+VERSION = "0.5.8"
+DGC_BIN = sys.executable if FROZEN else os.path.abspath(__file__)
+CLI_COMMAND = [sys.executable] if FROZEN else [sys.executable, DGC_BIN]
 SKILL_DIR = os.path.dirname(HERE)
 PLUGIN_ROOT = os.environ.get("PLUGIN_ROOT") or os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(os.path.dirname(SKILL_DIR))
 CODEX_HOME = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
@@ -57,7 +72,6 @@ ACCOUNT_PATH = os.path.join(NERFED_HOME, "account.json")     # last seen Codex a
 HOOKS_STATUS_PATH = os.path.join(NERFED_HOME, "hooks_status.json")
 CODEX_VERSIONS_PATH = os.path.join(NERFED_HOME, "codex_versions.json")
 UPDATE_PATH = os.path.join(NERFED_HOME, "update.json")
-RELEASES_API = "https://api.github.com/repos/kiyoakii/is-gpt-nerfed/releases/latest"
 RELEASES_URL = "https://github.com/kiyoakii/is-gpt-nerfed/releases"
 UPDATE_INTERVAL_S = 600  # every 10 minutes while the app is open; well inside GitHub's unauthenticated 60/hour
 STATE_PATH = os.path.join(NERFED_HOME, "state.json")
@@ -68,13 +82,17 @@ PLUGIN_NAME = "is-gpt-nerfed"
 MARKETPLACE_NAME = "is-gpt-nerfed"
 SKILL_CMD = "$is-gpt-nerfed"
 SIDE_CMD = "/side $is-gpt-nerfed"
-APP_CODEX_BINS = [  # the desktop app's own codex: Resources/codex-cli/bin/codex since ChatGPT 26.924, Resources/codex before
-    os.path.join(apps, app, "Contents", "Resources", rel)
-    for apps in ("/Applications", os.path.expanduser("~/Applications"))
-    for app in ("ChatGPT.app", "Codex.app")
-    for rel in ("codex-cli/bin/codex", "codex")
-]
-CODEX_NOTIFICATION_WAV = "/Applications/ChatGPT.app/Contents/Resources/codex-notification.wav"
+_win_roots = [os.environ.get("LOCALAPPDATA", ""), os.environ.get("PROGRAMFILES", ""),
+              os.environ.get("PROGRAMFILES(X86)", "")]
+APP_CODEX_BINS = [os.path.join(root, prefix, app, rel)
+                  for root in _win_roots if root
+                  for prefix in ("", "Programs")
+                  for app in ("ChatGPT", "Codex", "ChatGPT Desktop")
+                  for rel in (os.path.join("resources", "codex-cli", "bin", "codex.exe"),
+                              os.path.join("resources", "codex.exe"),
+                              os.path.join("resources", "app", "resources", "codex.exe"), "codex.exe")]
+if os.environ.get("LOCALAPPDATA"):
+    APP_CODEX_BINS += glob.glob(os.path.join(os.environ["LOCALAPPDATA"], "OpenAI", "Codex", "bin", "*", "codex.exe"))
 
 DEFAULT_CONFIG = {
     "frequency": "30m",              # "Nm" (minutes of activity) | "turns:N" | "manual"
@@ -84,15 +102,16 @@ DEFAULT_CONFIG = {
     "languages": ["zh", "en"],
     "probe_timeout_s": 300,          # a fork that has not answered by then is replaced once (slow models must not drop out)
     "passive": True,                 # scan rollouts on every Stop hook
-    "notify": True,                  # macOS notification when the pet has something to say
+    "notify": True,                  # Windows notification when the pet has something to say
     "notify_on_ok": False,           # also notify on MATCH verdicts
     "announce_ok": False,            # also push MATCH verdicts into the thread
     "sound": True,                   # Codex notification sound on a downgrade verdict
     "halt_on_mismatch": False,       # Guard-style: deny work tools after a mismatch until `nerfed resume`
     "mismatch_confidence": 0.8,      # MISMATCH needs p(top) ≥ this, p(declared) ≤ 1-this and a score margin ≥ 0.5σ
     "confirm_uncertain": False,      # opt in: a SUSPICIOUS first round triggers one more round (three more answers)
-    "check_updates": True,           # every 10 min, one request to GitHub for the latest release tag; off = no network at all
+    "check_updates": False,           # retained for config compatibility; automatic Windows updates are not configured
     "probe_originator": "auto",      # the client the probes identify as: auto = the session's own (Codex Desktop, or the CLI)
+    "show_inactive_threads": False,  # include archived threads and ledger-only (deleted/unavailable) sessions
     "hide_titles": False,            # panel shows "Session 1…N" and hides the account label (screenshot mode)
     "fresh_frequency": "manual",     # heartbeat for the fresh-session probe: "30m", "2h" … (time only; "manual" = off)
     "codex_bin": None,
@@ -194,6 +213,24 @@ def safe_name(s: str) -> str:
 
 def pid_alive(pid) -> bool:
     try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            if int(pid) <= 0:
+                return False
+            handle = kernel.OpenProcess(0x1000, False, int(pid))
+            if not handle:
+                return ctypes.get_last_error() == 5  # access denied is not proof of exit
+            try:
+                status = wintypes.DWORD()
+                return bool(kernel.GetExitCodeProcess(handle, ctypes.byref(status))) and status.value == 259
+            finally:
+                kernel.CloseHandle(handle)
         os.kill(int(pid), 0)
         return True
     except Exception:
@@ -238,7 +275,7 @@ def parse_frequency(s) -> tuple[str, int]:
 
 def coerce_config_value(key: str, value: str):
     if key in ("passive", "notify", "notify_on_ok", "announce_ok", "sound", "parallel", "halt_on_mismatch", "confirm_uncertain", "check_updates",
-               "hide_titles"):
+               "hide_titles", "show_inactive_threads"):
         return str(value).strip().lower() in ("1", "true", "yes", "on")
     if key == "mismatch_confidence":
         v = float(value)
@@ -710,13 +747,28 @@ def locked_session(sid: str):
     ensure_dirs()
     lock_path = session_path(sid) + ".lock"
     with open(lock_path, "a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        else:
+            lock.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if exc.errno not in (13, 11, 36):
+                        raise
+                    time.sleep(0.05)
         try:
             st = load_session(sid)
             yield st
             save_session(st)
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+            else:
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 def all_sessions() -> list[dict]:
@@ -800,7 +852,7 @@ def fresh_due(cfg: dict, account_id: str) -> bool:
 def spawn_fresh_worker() -> bool:
     try:
         with open(WORKER_LOG, "a") as log:
-            subprocess.Popen([sys.executable, DGC_BIN, "worker", "--fresh"], stdout=log, stderr=log, stdin=subprocess.DEVNULL,
+            subprocess.Popen(CLI_COMMAND + ["worker", "--fresh"], stdout=log, stderr=log, stdin=subprocess.DEVNULL,
                              start_new_session=True, env={k: v for k, v in os.environ.items() if not k.startswith("CODEX_SANDBOX")})
         return True
     except Exception as e:
@@ -870,20 +922,37 @@ def codex_version_key(v: str | None) -> tuple:
 
 
 def codex_candidates() -> list[str]:
-    """Every codex on this Mac: the ones on PATH, then the desktop app's own, each binary once."""
+    """Every runnable Codex binary on PATH and in desktop installation locations."""
     seen, out = set(), []
-    for p in [os.path.join(d, "codex") for d in os.environ.get("PATH", "").split(os.pathsep) if d] + APP_CODEX_BINS:
-        if os.path.isfile(p) and os.access(p, os.X_OK) and os.path.realpath(p) not in seen:
+    names = ("codex.exe", "codex") if sys.platform == "win32" else ("codex",)
+    path_bins = [os.path.join(d, name) for d in os.environ.get("PATH", "").split(os.pathsep) if d for name in names]
+    for p in path_bins + APP_CODEX_BINS:
+        if _runnable_codex(p) and os.path.realpath(p) not in seen:
             seen.add(os.path.realpath(p))
             out.append(p)
     return out
+
+
+def _runnable_codex(path: str | None) -> bool:
+    """Reject Unix shims accidentally installed beside Windows Codex (WinError 193)."""
+    if not path or not os.path.isfile(path):
+        return False
+    if sys.platform != "win32":
+        return os.access(path, os.X_OK)
+    if os.path.splitext(path)[1].lower() != ".exe":
+        return False
+    try:
+        with open(path, "rb") as f:
+            return f.read(2) == b"MZ"
+    except OSError:
+        return False
 
 
 def codex_bin(cfg: dict | None = None) -> str | None:
     """The configured codex, else the newest one found. An old CLI left on PATH (Homebrew, npm) cannot read the
     sessions a newer desktop app saved, and the server refuses it newer models, so the newest has to win."""
     cfg = cfg or load_config()
-    if cfg.get("codex_bin") and os.path.exists(cfg["codex_bin"]):
+    if cfg.get("codex_bin") and _runnable_codex(cfg["codex_bin"]):
         return cfg["codex_bin"]
     found = codex_candidates()
     if len(found) > 1:
@@ -965,27 +1034,36 @@ def pet_card(cfg: dict, verdict: str, quote: str, facts: list[str]) -> str:
 
 
 def notify(cfg: dict, message: str, subtitle: str = "is-gpt-nerfed", title: str | None = None) -> None:
-    if not cfg.get("notify", True) or sys.platform != "darwin":
+    if not cfg.get("notify", True):
         return
     title = title or "is-gpt-nerfed"
 
-    def esc(s: str) -> str:
-        return s.replace("\\", "\\\\").replace('"', '\\"')
-
-    script = f'display notification "{esc(message[:230])}" with title "{esc(title)}" subtitle "{esc(subtitle)}"'
-    try:
-        subprocess.Popen(["osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    except Exception as e:
-        log_error(f"notify failed: {e}")
-
+    if sys.platform == "win32":
+        # Use the inbox PowerShell toast API; it is present on supported Windows installs and
+        # does not add a Python dependency. Failure is deliberately best-effort; diagnostics are recorded locally.
+        try:
+            import base64
+            from xml.sax.saxutils import escape
+            args = [base64.b64encode(escape(x).encode("utf-8")).decode("ascii") for x in (title, message[:230])]
+            script = "$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s'));$m=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s'));" \
+                     "[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime] > $null;" \
+                     "$xml=[Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime]::new();$xml.LoadXml(\"<toast><visual><binding template='ToastGeneric'><text>$t</text><text>$m</text></binding></visual></toast>\");" \
+                     "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('is-gpt-nerfed').Show(([Windows.UI.Notifications.ToastNotification,Windows.UI.Notifications,ContentType=WindowsRuntime]::new($xml)))" % tuple(args)
+            subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception as e:
+            log_error(f"notify failed: {e}")
+        return
 
 def play_sound(cfg: dict) -> None:
-    if not cfg.get("sound", True) or sys.platform != "darwin" or not os.path.exists(CODEX_NOTIFICATION_WAV):
+    if not cfg.get("sound", True):
         return
-    try:
-        subprocess.Popen(["afplay", CODEX_NOTIFICATION_WAV], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    except Exception:
-        pass
+    if sys.platform == "win32":
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+        except Exception:
+            pass
+        return
 
 
 # ---------------------------------------------------------------------------------- the probe
@@ -1186,7 +1264,8 @@ def finalize_probe(rec: dict, outputs: list[dict], expected: str | None, errors:
 
 def default_originator(codex_bin: str | None) -> str:
     """What the user's own client reports as its originator: the desktop app when its bundled binary is used."""
-    return "Codex Desktop" if codex_bin and ".app/Contents/" in codex_bin else "codex_cli_rs"
+    path = (codex_bin or "").replace("\\", "/").lower()
+    return "Codex Desktop" if "/openai/codex/bin/" in path or "/resources/" in path else "codex_cli_rs"
 
 
 def resolve_originator(cfg: dict, codex_bin: str | None, thread_row: dict | None = None, override: str | None = None) -> str:
@@ -1210,8 +1289,11 @@ def run_fork_probe(thread_id: str, cfg: dict, queries: int | None = None, quiet:
     rec = {"id": cas.new_probe_id(), "mode": "fork", "thread_id": thread_id, "started": iso(), "ts_start": now(),
            "queries": q, "status": "running", "dgc_version": VERSION, "pid": os.getpid(),
            "account": {k: acct.get(k) for k in ("id", "label", "plan")}}
-    write_json(probe_path(rec["id"]), rec)
     with locked_session(thread_id) as st:
+        running = st.get("probe_running") or {}
+        if running.get("pid") and pid_alive(running["pid"]):
+            raise SystemExit("a probe is already running for this session")
+        write_json(probe_path(rec["id"]), rec)
         st["probe_running"] = {"pid": os.getpid(), "ts": now(), "probe": rec["id"]}
     log_event("probe_start", probe=rec["id"], mode="fork", sid=thread_id, queries=q, account=acct["id"],
               parallel=bool(cfg.get("parallel", True)), languages=cfg.get("languages"))
@@ -1407,7 +1489,7 @@ def transport_like(errors: list[str]) -> bool:
 def spawn_worker(thread_id: str, cfg: dict) -> bool:
     try:
         with open(WORKER_LOG, "a") as log:
-            subprocess.Popen([sys.executable, DGC_BIN, "worker", "--thread", thread_id], stdout=log, stderr=log,
+            subprocess.Popen(CLI_COMMAND + ["worker", "--thread", thread_id], stdout=log, stderr=log,
                              stdin=subprocess.DEVNULL, start_new_session=True,
                              env={k: v for k, v in os.environ.items() if not k.startswith("CODEX_SANDBOX")})
         return True
@@ -1565,12 +1647,7 @@ def fit(s, width: int) -> str:
 
 
 def pick_probe_target(cfg: dict):
-    """Interactive picker (vendored simple-term-menu). Returns ("fresh", None), ("thread", id) or None on escape."""
-    sys.path.insert(0, os.path.join(HERE, "vendor"))
-    try:
-        from simple_term_menu import TerminalMenu
-    except Exception as e:  # unsupported terminal / platform
-        raise SystemExit(f"interactive picker unavailable ({e}); pass --thread <id>")
+    """Interactive numbered picker for Windows consoles. Returns ("fresh", None), ("thread", id) or None on escape."""
     snap = build_snapshot(cfg)
     entries, targets = [], []
     gp = snap.get("global_probe")
@@ -1584,15 +1661,17 @@ def pick_probe_target(cfg: dict):
         model = (t.get("model") or "?") + (f" @ {t['effort']}" if t.get("effort") else "")
         entries.append(f"{fit(t['title'], 44)} {fit(model, 22)} {fit('active ' + (t.get('updated_ago') or ''), 16)} {verdict}")
         targets.append(("thread", t["id"]))
-    title = ("is-gpt-nerfed · probe which session?   ↑↓ move   / search   enter probe   esc quit\n"
-             f"{fit('session', 44)} {fit('model', 22)} {fit('activity', 16)} last verdict")
+    for i, entry in enumerate(entries, 1):
+        print(f"{i:2}. {entry}")
     try:
-        menu = TerminalMenu(entries, title=title, cycle_cursor=True, clear_screen=False, search_key="/", show_search_hint=True,
-                            menu_cursor="▸ ", menu_cursor_style=("fg_red", "bold"), menu_highlight_style=("standout",))
-        idx = menu.show()
-    except NotImplementedError as e:  # e.g. TERM not set
-        raise SystemExit(f"interactive picker needs a terminal ({e}); pass --thread <id> or --no-pick")
-    return None if idx is None else targets[idx]
+        answer = input("Session number (Enter to cancel): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if not answer:
+        return None
+    if not answer.isdigit() or not 1 <= int(answer) <= len(targets):
+        raise SystemExit("invalid session number")
+    return targets[int(answer) - 1]
 
 
 def cmd_probe_now(args) -> int:
@@ -1657,7 +1736,8 @@ def cmd_worker(args) -> int:
         print(f"{iso()} worker aborted: {e}")
     finally:
         with locked_session(args.thread) as st:
-            st["probe_running"] = None
+            if (st.get("probe_running") or {}).get("pid") == os.getpid():
+                st["probe_running"] = None
     return 0
 
 
@@ -1677,7 +1757,10 @@ def cmd_tick(args) -> int:
             continue
         if now() - (parse_iso(st.get("updated")) or 0) >= ACTIVE_WINDOW_S:  # quiet for a while: whoever was here has left
             continue
-        if not (st.get("requested") or probe_due(st, cfg, acct["id"])) or not interactive_thread(db_thread(st["sid"])):
+        row = db_thread(st["sid"])
+        if not row or row.get("archived"):
+            continue
+        if not (st.get("requested") or probe_due(st, cfg, acct["id"])) or not interactive_thread(row):
             continue
         with locked_session(st["sid"]) as live:  # decide again under the lock: a hook may have run the schedule meanwhile
             if run_schedule(live, cfg, acct, [], via="tick"):
@@ -1789,7 +1872,7 @@ def cmd_hook(args) -> int:
                     elif e["severity"] == "good":
                         messages.append(pet_line("UPGRADED", seed=e["detail"], detail=e["detail"]))
             run_schedule(st, cfg, acct, messages)
-            if st["kind"] == "main" and fresh_due(cfg, acct["id"]) and spawn_fresh_worker():
+            if st["kind"] == "main" and cfg.get("mode") == "auto" and fresh_due(cfg, acct["id"]) and spawn_fresh_worker():
                 log_event("fresh_due", why=f"{cfg.get('fresh_frequency')} elapsed", triggered_by=sid)
             if messages:
                 out["systemMessage"] = "is-gpt-nerfed: " + "\n".join(messages)
@@ -1906,8 +1989,9 @@ def interactive_thread(row: dict | None) -> bool:
     return not orig.startswith(NON_INTERACTIVE_ORIGINATORS)
 
 
-def db_recent_threads_detailed(since_ms: int, limit: int = 40) -> list[dict]:
-    base = (f"FROM threads WHERE archived = 0 AND (thread_source IS NULL OR thread_source != 'subagent') "
+def db_recent_threads_detailed(since_ms: int, limit: int = 40, include_archived: bool = False) -> list[dict]:
+    archive_filter = "" if include_archived else "archived = 0 AND "
+    base = (f"FROM threads WHERE {archive_filter} (thread_source IS NULL OR thread_source != 'subagent') "
             f"AND (originator IS NULL OR originator NOT LIKE 'codex_exec%') "
             f"AND updated_at_ms >= ? ORDER BY updated_at_ms DESC LIMIT ?")
     rows = db_query(f"SELECT {THREAD_COLS}, preview {base}", (since_ms, limit))
@@ -2014,7 +2098,7 @@ def probe_summary(row: dict, current: str | None = None) -> dict:
 def demo_snapshot(cfg: dict) -> dict:
     """Synthetic English sample data for screenshots (`nerfed snapshot --demo`). Nothing here is read from disk."""
     t0 = now()
-    cfg = dict(DEFAULT_CONFIG)  # default settings, not this Mac's
+    cfg = dict(DEFAULT_CONFIG)  # default settings, not this computer's
 
     def probe(pid, tid, verdict, direction=None, expected="gpt-6-astra", pred="gpt-6-astra", p=1.0, p_exp=None, margin=None,
               n=3, q=3, ago_s=300, errors=None, status="done", rounds=1, retries=0, mode="fork", stale=False, results=None):
@@ -2079,7 +2163,7 @@ def demo_snapshot(cfg: dict) -> dict:
             "hooks": {"checked": iso(t0 - 300), "checked_ago": "5m ago", "total": 5, "trusted": 5, "untrusted": 0, "state": "trusted",
                       "error": None, "last_desktop_event": iso(t0 - 12), "last_desktop_event_ago": "12s ago", "desktop_loaded": True,
                       "installed_ago": "2h ago", "desktop_loaded_current": True, "stale_since_install_s": None},
-            "install": {"plugin_enabled": True, "codex_found": True, "marketplace_root": "/Applications/IsGPTNerfed.app/Contents/Resources/marketplace", "bundled": True},
+            "install": {"plugin_enabled": True, "codex_found": True, "marketplace_root": "C:/Apps/IsGPTNerfed", "bundled": True},
             "update": {"current": VERSION, "latest": VERSION, "available": False, "url": RELEASES_URL, "checked": iso(t0 - 10800),
                        "checked_ago": "3h ago", "error": None, "enabled": True},
             "fresh_due": False,
@@ -2151,8 +2235,10 @@ def build_snapshot(cfg: dict, hours: float = 48.0) -> dict:
     horizon = hours * 3600
     cutoff = now() - horizon
     threads: dict[str, dict] = {}
-    for row in db_recent_threads_detailed(int(cutoff * 1000)):
+    show_inactive = bool(cfg.get("show_inactive_threads", False))
+    for row in db_recent_threads_detailed(int(cutoff * 1000), include_archived=show_inactive):
         threads[row["id"]] = {
+            "archived": bool(row.get("archived")), "unavailable": False,
             "id": row["id"], "title": (row.get("name") or row.get("title") or (row.get("preview") or "").strip()[:70] or row["id"][:12]),
             "cwd": row.get("cwd"), "model": row.get("model"), "effort": row.get("reasoning_effort"),
             "updated_ts": (row.get("updated_at_ms") or 0) / 1000.0, "turns": 0, "turns_since_probe": 0, "due": False,
@@ -2164,12 +2250,21 @@ def build_snapshot(cfg: dict, hours: float = 48.0) -> dict:
         upd = parse_iso(st.get("updated")) or 0
         if upd < cutoff and st["sid"] not in threads:
             continue
-        if st["sid"] not in threads and not interactive_thread(db_thread(st["sid"])):
+        row = db_thread(st["sid"])
+        # The ledger survives deletion/archive. Never resurrect these entries by merging history.
+        if not show_inactive and (row is None or row.get("archived")):
+            threads.pop(st["sid"], None)
+            continue
+        if not interactive_thread(row):
             continue
         t = threads.setdefault(st["sid"], {"id": st["sid"], "title": st["sid"][:12], "cwd": st.get("cwd"), "model": st.get("model"),
                                            "effort": None, "updated_ts": 0, "turns": 0, "turns_since_probe": 0, "due": False,
                                            "probe_running": False, "halted": False, "requested": False, "hard_evidence": 0,
                                            "soft_evidence": 0, "last_evidence": None})
+        t["archived"] = bool(row and row.get("archived"))
+        t["unavailable"] = row is None
+        if row:
+            t["title"] = row.get("name") or row.get("title") or t["title"]
         t["updated_ts"] = max(t["updated_ts"], upd)
         t["model"] = (st.get("scan") or {}).get("model") or t.get("model") or st.get("model")
         t["effort"] = (st.get("scan") or {}).get("effort") or t.get("effort")
@@ -2279,7 +2374,7 @@ def build_snapshot(cfg: dict, hours: float = 48.0) -> dict:
                   to_status=status, message=message, downgraded=downgraded, suspicious=suspicious, unverified=unverified, upgraded=upgraded)
         write_json(STATE_PATH, {**state, "last_status": status, "last_message": message, "changed_at": iso()})
     install = {"plugin_enabled": plugin_enabled_in_config(), "codex_found": bool(codex_bin(cfg)),
-               "marketplace_root": os.path.dirname(PLUGIN_ROOT), "bundled": "/Contents/Resources/" in PLUGIN_ROOT}
+               "marketplace_root": os.path.dirname(PLUGIN_ROOT), "bundled": FROZEN}
     snap = {"generated": iso(), "version": VERSION, "nerfed_bin": DGC_BIN, "ledger": NERFED_HOME, "config": cfg,
             "hooks_last_event": (last_event or {}).get("ts"), "hooks_last_event_ago": ago(parse_iso((last_event or {}).get("ts"))),
             "hooks": hooks, "install": install, "update": maybe_check_updates(cfg), "fresh_due": fresh_due(cfg, acct["id"]),
@@ -2314,201 +2409,9 @@ def update_status(cfg: dict | None = None) -> dict:
             "enabled": bool((cfg if cfg is not None else load_config()).get("check_updates", True))}
 
 
-def pick_release_assets(data: dict) -> tuple[str | None, str | None]:
-    """(zip url, sha256 url) from a GitHub release: the first IsGPTNerfed zip, and the checksum file named after
-    that very zip (a release also carries the dmg's checksum; the wrong one would fail every update)."""
-    assets = [a for a in (data.get("assets") or []) if isinstance(a, dict)]
-    zips = sorted((a for a in assets if str(a.get("name", "")).lower().endswith(".zip")),
-                  key=lambda a: (not str(a.get("name", "")).startswith("IsGPTNerfed"), str(a.get("name", ""))))
-    if not zips:
-        return None, None
-    want = str(zips[0].get("name")) + ".sha256"
-    sha = next((a.get("browser_download_url") for a in assets if a.get("name") == want), None)
-    return zips[0].get("browser_download_url"), sha
-
-
-def fetch_latest_release(u: dict) -> dict:
-    """One request to GitHub: the latest release, its zip and its .sha256 (build.sh --zip writes both)."""
-    import urllib.error
-    import urllib.request
-    rec = {**{k: u.get(k) for k in ("latest", "url", "asset_url", "sha256_url", "notified", "status", "installed")},
-           "checked": iso(), "error": None}
-    rec["url"] = rec.get("url") or RELEASES_URL
-    req = urllib.request.Request(RELEASES_API, headers={"User-Agent": f"is-gpt-nerfed/{VERSION}", "Accept": "application/vnd.github+json"})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        zip_url, sha_url = pick_release_assets(data)
-        rec.update(latest=str(data.get("tag_name") or "").lstrip("v") or None, name=data.get("name"),
-                   url=data.get("html_url") or RELEASES_URL, published_at=data.get("published_at"),
-                   asset_url=zip_url, sha256_url=sha_url)
-    except urllib.error.HTTPError as e:
-        rec["error"] = f"HTTP {e.code}"  # 404 while the repository is private: nothing to show
-    except Exception as e:
-        rec["error"] = str(e)[:160]
-    return rec
-
-
-def cmd_update_install(args) -> int:
-    """Download the latest release, verify its checksum, replace the app bundle (the old one goes to the Trash) and
-    relaunch it. What the panel's update link runs, detached, so it survives the app it replaces."""
-    import hashlib
-    import plistlib
-    import shutil
-    import signal
-    import tempfile
-    import urllib.request
-    import zipfile
-    u = read_json(UPDATE_PATH, {}) or {}
-    if not u.get("asset_url") or (u.get("latest") and version_tuple(u["latest"]) <= version_tuple(VERSION) and not args.force):
-        u = fetch_latest_release(u)
-        write_json(UPDATE_PATH, u)
-    latest, asset = u.get("latest"), u.get("asset_url")
-
-    def fail(msg: str) -> int:
-        log_error(f"update install failed: {msg}")
-        write_json(UPDATE_PATH, {**(read_json(UPDATE_PATH, {}) or {}), "status": f"failed: {msg}"[:200]})
-        print(f"update failed: {msg}")
-        return 1
-
-    if not asset:
-        return fail(u.get("error") or "no release archive found")
-    if not args.force and latest and version_tuple(latest) <= version_tuple(VERSION):
-        return fail(f"{latest} is not newer than {VERSION}")
-    dest = args.app or next((p for p in (os.path.expanduser("~/Applications/IsGPTNerfed.app"), "/Applications/IsGPTNerfed.app")
-                             if os.path.isdir(p)), None)
-    if not dest or not os.path.isdir(dest):
-        return fail("cannot find the installed IsGPTNerfed.app")
-    write_json(UPDATE_PATH, {**u, "status": "downloading"})
-    log_event("update_install", latest=latest, asset=asset, app=dest)
-    headers = {"User-Agent": f"is-gpt-nerfed/{VERSION}"}
-    tmp = tempfile.mkdtemp(prefix="is-gpt-nerfed-update-")
-    zip_path = os.path.join(tmp, "update.zip")
-    try:
-        with urllib.request.urlopen(urllib.request.Request(asset, headers=headers), timeout=60) as resp, open(zip_path, "wb") as f:
-            total = 0
-            while True:
-                chunk = resp.read(1 << 20)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > 300 << 20:
-                    raise ValueError("archive larger than 300 MB")
-                f.write(chunk)
-    except Exception as e:
-        return fail(f"download: {e}")
-    if u.get("sha256_url"):
-        try:
-            with urllib.request.urlopen(urllib.request.Request(u["sha256_url"], headers=headers), timeout=30) as resp:
-                expected = resp.read().decode("utf-8", "replace").split()[0].strip().lower()
-            h = hashlib.sha256()
-            with open(zip_path, "rb") as f:
-                for chunk in iter(lambda: f.read(1 << 20), b""):
-                    h.update(chunk)
-            if h.hexdigest() != expected:
-                return fail("sha256 mismatch: the archive is not the one the release lists")
-        except Exception as e:
-            return fail(f"checksum: {e}")
-    xdir = os.path.join(tmp, "x")
-    os.makedirs(xdir, exist_ok=True)
-    try:
-        if shutil.which("ditto"):
-            subprocess.run(["ditto", "-x", "-k", zip_path, xdir], check=True, capture_output=True)
-        else:
-            with zipfile.ZipFile(zip_path) as z:
-                z.extractall(xdir)
-    except Exception as e:
-        return fail(f"extract: {e}")
-    new_app = None
-    for root, dirs, _files in os.walk(xdir):
-        hit = next((d for d in sorted(dirs) if d.endswith(".app")), None)
-        if hit:
-            new_app = os.path.join(root, hit)
-            break
-        if root[len(xdir):].count(os.sep) >= 2:
-            dirs[:] = []
-    if not new_app:
-        return fail("no .app inside the archive")
-    try:
-        with open(os.path.join(new_app, "Contents", "Info.plist"), "rb") as f:
-            got = str(plistlib.load(f).get("CFBundleShortVersionString") or "")
-    except Exception as e:
-        return fail(f"Info.plist: {e}")
-    if latest and version_tuple(got) != version_tuple(latest):
-        return fail(f"the archive is version {got}, the release says {latest}")
-    pid = int(args.pid) if args.pid else None
-    if pid and pid_alive(pid):  # the app that asked for this: stop it before swapping its bundle
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
-        for _ in range(60):
-            if not pid_alive(pid):
-                break
-            time.sleep(0.25)
-    elif sys.platform == "darwin" and not args.no_launch:
-        subprocess.run(["pkill", "-x", "IsGPTNerfed"], capture_output=True)
-        time.sleep(1)
-    backup_dir = args.backup_dir or os.path.expanduser("~/.Trash")
-    if not os.path.isdir(backup_dir):
-        backup_dir = tmp
-    backup = os.path.join(backup_dir, f"IsGPTNerfed-{VERSION}-{int(now())}.app")
-    try:
-        shutil.move(dest, backup)
-    except Exception as e:
-        return fail(f"cannot move the old app aside: {e}")
-    try:
-        shutil.move(new_app, dest)
-    except Exception as e:
-        try:
-            shutil.move(backup, dest)
-        except Exception:
-            pass
-        return fail(f"cannot put the new app in place: {e}")
-    if sys.platform == "darwin":
-        subprocess.run(["xattr", "-dr", "com.apple.quarantine", dest], capture_output=True)
-    write_json(UPDATE_PATH, {**u, "status": "installed", "installed": got, "installed_at": iso(), "error": None})
-    log_event("update_installed", version=got, app=dest, backup=backup)
-    if sys.platform == "darwin" and not args.no_launch:
-        for _ in range(8):  # LaunchServices can lag right after the swap
-            if subprocess.run(["open", dest], capture_output=True).returncode == 0:
-                break
-            time.sleep(1)
-    print(f"installed {got} at {dest} (previous copy: {backup})")
-    return 0
-
-
 def maybe_check_updates(cfg: dict) -> dict:
-    """Every UPDATE_INTERVAL_S, and never from tests, fetch the latest release tag in a background process. A failed
-    check is recorded in update.json only; the panel shows nothing for it."""
-    status = update_status(cfg)
-    if status["enabled"] and not os.environ.get("NERFED_NO_UPDATE_CHECK"):
-        u = read_json(UPDATE_PATH, {}) or {}
-        checked = (parse_iso(u.get("checked")) if u.get("checked") else None) or 0
-        started = float(u.get("started_ts") or 0)
-        if now() - checked > UPDATE_INTERVAL_S and now() - started > 120:
-            write_json(UPDATE_PATH, {**u, "started_ts": now()})
-            try:
-                subprocess.Popen([sys.executable, DGC_BIN, "update-check"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                 stdin=subprocess.DEVNULL, start_new_session=True)
-            except Exception as e:
-                log_error(f"update check spawn failed: {e}")
-    return status
-
-
-def cmd_update_check(args) -> int:
-    """One request to GitHub: the latest release tag. Notifies once per new version."""
-    cfg = load_config()
-    rec = fetch_latest_release(read_json(UPDATE_PATH, {}) or {})
-    available = bool(rec.get("latest")) and version_tuple(rec["latest"]) > version_tuple(VERSION)
-    log_event("update_check", latest=rec.get("latest"), available=available, error=rec.get("error"))
-    if available and rec.get("notified") != rec["latest"]:
-        notify(cfg, f"is-gpt-nerfed {rec['latest']} is out; you run {VERSION}. Open the panel to update.", subtitle="update available")
-        rec["notified"] = rec["latest"]
-    write_json(UPDATE_PATH, rec)
-    print(f"current {VERSION} · latest {rec.get('latest') or '?'}" + (f" · {rec['error']}" if rec.get("error") else "")
-          + (" · update available" if available else ""))
-    return 0
+    """Windows updates are manual; never download the macOS upstream release."""
+    return {**update_status(cfg), "enabled": False, "available": False}
 
 
 def hooks_status(cfg: dict, max_age_s: float = 900, force: bool = False) -> dict:
@@ -2863,7 +2766,8 @@ def manifest_paths() -> list[str]:
 
 def run(cmd: list[str], timeout: int = 120) -> tuple[int, str]:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         return r.returncode, (r.stdout + r.stderr).strip()
     except Exception as e:
         return 1, str(e)
@@ -2882,6 +2786,8 @@ def plugin_enabled_in_config() -> bool:
 
 
 def cmd_setup(args) -> int:
+    if FROZEN:
+        return windows_integration.command(sys.modules[__name__], argparse.Namespace(action="install", trust_hooks=bool(getattr(args,"trust_hooks",False)), path=None))
     cfg = load_config()
     ensure_dirs()
     root = os.path.dirname(PLUGIN_ROOT)
@@ -2889,17 +2795,24 @@ def cmd_setup(args) -> int:
     write_bin_hint()
     cb = codex_bin(cfg)
     ok_cli = False
+    if not cb or args.no_cli:
+        print("No runnable Codex registration path; config.toml was not changed. Set codex_bin and retry.")
+        return 1
     if cb and not args.no_cli:
         print(f"codex: {cb}")
         rc, out = run([cb, "plugin", "marketplace", "add", root])
         print(f"  marketplace add → rc={rc} {out[:300]}")
+        if rc:
+            return 1
         cache_root = os.path.join(CODEX_HOME, "plugins", "cache", PLUGIN_NAME, PLUGIN_NAME)
         previous = [d for d in (os.listdir(cache_root) if os.path.isdir(cache_root) else []) if not d.startswith(".")]
         if plugin_enabled_in_config():  # reinstall: drop the cached copy so Codex picks up the current code
             run([cb, "plugin", "remove", f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"])
         rc2, out2 = run([cb, "plugin", "add", f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"])
         print(f"  plugin add → rc={rc2} {out2[:300]}")
-        ok_cli = rc2 == 0 or plugin_enabled_in_config()
+        ok_cli = rc2 == 0
+        if not ok_cli:
+            return 1
         # A running Codex app keeps the hook definitions it loaded, which point at the previous cache directory.
         # Keep every earlier version path resolvable (as a symlink to the new copy) so its hooks do not fail and
         # block tool calls until the app reloads.
@@ -2916,25 +2829,16 @@ def cmd_setup(args) -> int:
             # Fallback the hook command uses when PLUGIN_ROOT is stale. It points at the marketplace source (the
             # checkout or the app bundle), which survives version bumps; Codex deletes old cache directories.
             stable = os.path.join(NERFED_HOME, "plugin")
-            source = current if "/plugins/cache/" in PLUGIN_ROOT else PLUGIN_ROOT
+            source = current if "/plugins/cache/" in PLUGIN_ROOT.replace("\\", "/") else PLUGIN_ROOT
             try:
                 if os.path.islink(stable) or os.path.exists(stable):
                     os.remove(stable) if os.path.islink(stable) else shutil.rmtree(stable)
-                os.symlink(source, stable)
+                try:
+                    os.symlink(source, stable)
+                except OSError:
+                    shutil.copytree(source, stable, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
             except OSError as e:
                 print(f"  could not update {stable}: {e}")
-    if not ok_cli:
-        print("falling back to manual registration in ~/.codex/config.toml")
-        text = config_toml_text()
-        block = ""
-        if f"[marketplaces.{MARKETPLACE_NAME}]" not in text:
-            block += f'\n[marketplaces.{MARKETPLACE_NAME}]\nsource_type = "local"\nsource = "{root}"\n'
-        if not plugin_enabled_in_config():
-            block += f'\n[plugins."{PLUGIN_NAME}@{MARKETPLACE_NAME}"]\nenabled = true\n'
-        if block:
-            with open(os.path.join(CODEX_HOME, "config.toml"), "a", encoding="utf-8") as f:
-                f.write(block)
-            print("  appended:" + block)
     if not os.path.exists(CONFIG_PATH):
         save_config(cfg)
         print(f"wrote {CONFIG_PATH}")
@@ -3000,11 +2904,11 @@ def cmd_doctor(args) -> int:
             problems += 1
 
     print(f"is-gpt-nerfed doctor (v{VERSION})")
-    upd = update_status()
+    upd = maybe_check_updates(cfg)
     print("  update check: " + ("off" if not upd["enabled"] else
                                 (f"{upd['latest']} available at {upd['url']}" if upd["available"] else
                                  f"latest known {upd['latest'] or '?'} ({upd['checked_ago'] or 'never checked'})" + (f" · {upd['error']}" if upd.get("error") else ""))))
-    check(sys.version_info >= (3, 9), f"python {sys.version.split()[0]}", "needs Python 3.9+")
+    check(sys.version_info >= (3, 11), f"python {sys.version.split()[0]}", "needs Python 3.11+")
     check(os.path.isdir(CODEX_HOME), f"CODEX_HOME {CODEX_HOME}", "Codex not installed?")
     cb = codex_bin(cfg)
     check(bool(cb), f"codex binary: {cb or 'not found'}" + (f" ({codex_version(cb) or 'version unknown'})" if cb else ""),
@@ -3021,7 +2925,9 @@ def cmd_doctor(args) -> int:
     if bank_ok:
         import hashlib
         with open(BANK_PATH, "rb") as f:
-            digest = hashlib.sha256(f.read()).hexdigest()
+            bank_bytes = f.read()
+        # Git may check out JSON with CRLF on Windows while provenance records the canonical LF bytes.
+        digest = hashlib.sha256(bank_bytes.replace(b"\r\n", b"\n")).hexdigest()
         bank_ok = digest == prov.get("sha256")
     check(bank_ok, f"ModelTrace bank {'sha256 matches provenance' if bank_ok else 'missing or modified'} ({len(prov.get('models') or [])} models)")
     mps = manifest_paths()
@@ -3031,13 +2937,15 @@ def cmd_doctor(args) -> int:
         hooks = m.get("hooks") or ((m.get("extensions") or {}).get("com.openai") or {}).get("hooks")
         text = json.dumps(hooks) if hooks else ""
         check(bool(hooks), f"hooks declared in {os.path.relpath(p, PLUGIN_ROOT)}")
-        check("${PLUGIN_ROOT" in text and "exit 0" in text,
+        check(bool(hooks) and all(windows_integration.hook_is_fail_open(h.get("command", ""))
+                                  for groups in hooks.get("hooks", {}).values() for group in groups for h in group.get("hooks", [])),
               "hook commands locate the plugin through ${PLUGIN_ROOT} and never block when the file is missing")
     stable = os.path.join(NERFED_HOME, "plugin")
-    check(os.path.exists(os.path.join(stable, "skills", "is-gpt-nerfed", "scripts", "nerfed")) if os.path.exists(CONFIG_PATH) else True,
-          f"fallback plugin path {stable} → {os.path.realpath(stable) if os.path.exists(stable) else 'missing'}", "run ./install.sh")
+    stable_ok = os.path.exists(os.path.join(stable, "skills", "is-gpt-nerfed", "scripts", "nerfed")) if os.path.exists(CONFIG_PATH) else True
+    check(stable_ok,
+          f"fallback plugin path {stable} → {os.path.realpath(stable) if os.path.exists(stable) else 'missing'}", "run .\\install.ps1")
     text = config_toml_text()
-    check(plugin_enabled_in_config(), f'[plugins."{PLUGIN_NAME}@…"] enabled = true in config.toml', "run ./install.sh")
+    check(plugin_enabled_in_config(), f'[plugins."{PLUGIN_NAME}@…"] enabled = true in config.toml', "run .\\install.ps1")
     check(not re.search(r"\[features\][^\[]*hooks\s*=\s*false", text), "hooks feature not disabled in config.toml")
     hs = hooks_status(cfg, force=bool(getattr(args, "live", False)))
     if hs.get("state") == "trusted":
@@ -3045,7 +2953,7 @@ def cmd_doctor(args) -> int:
     elif hs.get("state") == "untrusted":
         check(False, f"hooks not trusted ({hs.get('trusted')}/{hs.get('total')})", f"run `{DGC_BIN} hooks trust`")
     elif hs.get("state") == "missing":
-        check(False, "Codex does not list this plugin's hooks", "run ./install.sh, then restart the Codex app")
+        check(False, "Codex does not list this plugin's hooks", "run .\\install.ps1, then restart the Codex app")
     else:
         print(f"  ⚠️  hook trust unknown ({hs.get('error') or 'not checked yet'})")
     if hs.get("disabled"):
@@ -3081,8 +2989,14 @@ def cmd_doctor(args) -> int:
                 check(False, f"ephemeral fork failed: {e}")
     if os.path.exists(ERRORS_PATH):
         try:
-            last = open(ERRORS_PATH).read().strip().splitlines()[-1][:160]
-            print(f"  ⚠️  errors logged in {ERRORS_PATH} (last: {last})")
+            error_lines = open(ERRORS_PATH, encoding="utf-8").read().strip().splitlines()
+            last = error_lines[-1][:160] if error_lines else ""
+            error_ts = parse_iso(error_lines[-1].split(None, 1)[0]) if error_lines else None
+            event_ts = parse_iso((evs[-1].get("ts") if evs else None))
+            if error_ts and event_ts and event_ts > error_ts:
+                print(f"  ✅ historical errors in {ERRORS_PATH} (last: {last})")
+            else:
+                print(f"  ⚠️  errors logged in {ERRORS_PATH} (last: {last})")
         except Exception:
             pass
     print(f"{'all good' if not problems else str(problems) + ' problem(s)'} — next: restart the Codex app, then in any session say  {SKILL_CMD}")
@@ -3292,25 +3206,22 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("text", nargs="*")
     s.add_argument("--verdict")
     s.set_defaults(fn=cmd_pet)
-    s = sub.add_parser("setup", help="register the plugin with Codex (used by install.sh)")
+    s = sub.add_parser("integration", help="Windows application plugin installation and diagnostics")
+    s.add_argument("action", choices=["status", "install", "trust", "prepare", "set-codex"])
+    s.add_argument("--path")
+    s.add_argument("--trust-hooks", action="store_true")
+    s.set_defaults(fn=lambda args: windows_integration.command(sys.modules[__name__], args))
+
+    s = sub.add_parser("setup", help="register the plugin with Codex (used by install.ps1)")
     s.add_argument("--no-cli", action="store_true", help="skip `codex plugin …` and edit config.toml directly")
     s.add_argument("--trust-hooks", action="store_true", help="record trust for the plugin's hooks without asking")
     s.add_argument("--no-trust", action="store_true", help="do not touch hook trust")
     s.add_argument("--fork", action="store_true", help=argparse.SUPPRESS)
     s.add_argument("--thread", help=argparse.SUPPRESS)
     s.set_defaults(fn=cmd_setup)
-    s = sub.add_parser("teardown", help="unregister the plugin (used by uninstall.sh)")
+    s = sub.add_parser("teardown", help="unregister the plugin (used by uninstall.ps1)")
     s.add_argument("--purge", action="store_true", help="also delete the ledger")
     s.set_defaults(fn=cmd_teardown)
-    s = sub.add_parser("update-check", help="ask GitHub for the latest release once (the app does this every 10 min while check_updates is on)")
-    s.set_defaults(fn=cmd_update_check)
-    s = sub.add_parser("update-install", help="download the latest release, replace the app and relaunch it (what the panel's update link does)")
-    s.add_argument("--app", help="path of the installed IsGPTNerfed.app (default: ~/Applications, then /Applications)")
-    s.add_argument("--pid", help="pid of the running app, stopped before the swap")
-    s.add_argument("--backup-dir", help="where the previous copy goes (default: the Trash)")
-    s.add_argument("--no-launch", action="store_true", help="do not relaunch afterwards")
-    s.add_argument("--force", action="store_true", help="install even if the release is not newer")
-    s.set_defaults(fn=cmd_update_install)
     s = sub.add_parser("doctor", help="check the installation; --fork also creates a real ephemeral fork (no inference)")
     s.add_argument("--fork", action="store_true")
     s.add_argument("--live", action="store_true", help="re-query hook trust instead of using the cached answer")

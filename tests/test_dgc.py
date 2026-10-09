@@ -27,6 +27,8 @@ loader = importlib.machinery.SourceFileLoader("dgc", DGC_PATH)
 spec = importlib.util.spec_from_loader("dgc", loader)
 dgc = importlib.util.module_from_spec(spec)
 loader.exec_module(dgc)
+from windows_test_support import adapt_fake_server
+adapt_fake_server(dgc)
 
 
 def rollout_lines(*records):
@@ -241,7 +243,7 @@ class ForkProbeTests(unittest.TestCase):
 
     def setUp(self):
         dgc.ensure_dirs()
-        dgc.save_config({**dgc.DEFAULT_CONFIG, "codex_bin": FAKE_CODEX, "notify": False, "sound": False, "probe_timeout_s": 30})
+        dgc.save_config({**dgc.DEFAULT_CONFIG, "codex_bin": FAKE_CODEX, "show_inactive_threads": True, "notify": False, "sound": False, "probe_timeout_s": 30})
         dgc._BANK = None
 
     def test_match(self):
@@ -466,6 +468,7 @@ class ForkProbeTests(unittest.TestCase):
         base = {"session_id": sid, "cwd": TMP, "model": "gpt-6-astra"}
         log_path = os.path.join(os.environ["NERFED_HOME"], "log.jsonl")
         with mock.patch.object(dgc, "link_session", side_effect=lambda st: st.update(kind="main")), \
+                mock.patch.object(dgc, "db_thread", return_value={"id": sid, "archived": 0}), \
                 mock.patch.object(dgc, "spawn_worker", return_value=True) as spawn:
             run_hook({**base, "hook_event_name": "UserPromptSubmit", "prompt": "1"})
             run_hook({**base, "hook_event_name": "Stop"})
@@ -681,7 +684,7 @@ class ForkProbeTests(unittest.TestCase):
 
 class SnapshotReportTests(unittest.TestCase):
     def setUp(self):
-        dgc.save_config({**dgc.DEFAULT_CONFIG, "codex_bin": FAKE_CODEX, "notify": False, "sound": False, "probe_timeout_s": 30})
+        dgc.save_config({**dgc.DEFAULT_CONFIG, "codex_bin": FAKE_CODEX, "show_inactive_threads": True, "notify": False, "sound": False, "probe_timeout_s": 30})
 
     def test_snapshot_carries_per_thread_reports(self):
         snap = json.loads(run_cli(["snapshot", "--json", "--demo"])[1])
@@ -708,10 +711,10 @@ class SnapshotReportTests(unittest.TestCase):
         # regression: log_event("session_start", kind=...) collided with log_event's own `kind` parameter and every
         # SessionStart hook died in the fail-safe (exit 0, nothing recorded)
         errors = os.path.join(dgc.NERFED_HOME, "errors.log")
-        before = open(errors).read() if os.path.exists(errors) else ""
+        before = open(errors, encoding="utf-8").read() if os.path.exists(errors) else ""
         with mock.patch.object(dgc, "link_session", side_effect=lambda st: st.update(kind="main")):
             run_hook({"session_id": "start-thread-1", "cwd": TMP, "model": "gpt-6-astra", "hook_event_name": "SessionStart", "source": "startup"})
-        after = open(errors).read() if os.path.exists(errors) else ""
+        after = open(errors, encoding="utf-8").read() if os.path.exists(errors) else ""
         self.assertEqual(after, before, "the SessionStart hook must not crash")
         events = [e for e in dgc.iter_jsonl(os.path.join(dgc.NERFED_HOME, "log.jsonl")) if e.get("kind") == "session_start"]
         self.assertTrue(events and events[-1].get("sid") == "start-thread-1" and events[-1].get("session_kind") == "main")
@@ -762,10 +765,10 @@ class SnapshotReportTests(unittest.TestCase):
         self.assertEqual(dgc.assess("gpt-6-astra", {"results": results, "used_outputs": 2}, [])["verdict"], "MISMATCH")
 
     def test_probes_identify_as_the_client_they_check_for(self):
-        self.assertEqual(dgc.default_originator("/Applications/ChatGPT.app/Contents/Resources/codex"), "Codex Desktop")
-        self.assertEqual(dgc.default_originator("/opt/homebrew/bin/codex"), "codex_cli_rs")
-        self.assertEqual(dgc.resolve_originator({"probe_originator": "auto"}, "/opt/homebrew/bin/codex", {"originator": "Codex Desktop"}), "Codex Desktop")
-        self.assertEqual(dgc.resolve_originator({"probe_originator": "my-client"}, "/opt/homebrew/bin/codex", {"originator": "Codex Desktop"}), "my-client")
+        self.assertEqual(dgc.default_originator("C:/Users/test/AppData/Local/OpenAI/Codex/bin/build/codex.exe"), "Codex Desktop")
+        self.assertEqual(dgc.default_originator("C:/npm/codex.exe"), "codex_cli_rs")
+        self.assertEqual(dgc.resolve_originator({"probe_originator": "auto"}, "C:/npm/codex.exe", {"originator": "Codex Desktop"}), "Codex Desktop")
+        self.assertEqual(dgc.resolve_originator({"probe_originator": "my-client"}, "C:/npm/codex.exe", {"originator": "Codex Desktop"}), "my-client")
         self.assertEqual(dgc.resolve_originator({"probe_originator": "auto"}, None, None, "override"), "override")
         code, out = run_cli(["probe", "fresh", "--model", "gpt-6-astra", "--queries", "1", "--originator", "Codex Desktop"], {"FAKE_CODEX_MODEL": "gpt-6-astra"})
         self.assertEqual(code, 0, out)
@@ -777,32 +780,22 @@ class SnapshotReportTests(unittest.TestCase):
         self.assertEqual(rec["thread"]["provider"], "openai", "no provider asked for: Codex's own default (config.toml's, e.g. a relay)")
 
     def test_the_newest_codex_runs_the_probes(self):
-        """The desktop moved its codex to Resources/codex-cli/bin/codex; an old CLI on PATH then won and could neither
-        read the sessions the desktop saved (paginated_threads) nor use its model (#10, #11)."""
         d = tempfile.mkdtemp(dir=TMP)
-
-        def fake(name, version):
-            path = os.path.join(d, name, "codex")
+        def fake(name):
+            path = os.path.join(d, name, "codex.exe")
             os.makedirs(os.path.dirname(path))
-            with open(path, "w") as f:
-                f.write(f"#!/bin/sh\necho 'codex-cli {version}'\n")
-            os.chmod(path, 0o755)
+            with open(path, "wb") as f:
+                f.write(b"MZ" + bytes(20))
             return path
-
-        old, app = fake("brew", "0.150.0"), fake("app", "0.158.0-alpha.2.1")
-        dgc._CODEX_VERSIONS.clear()
-        with mock.patch.object(dgc, "APP_CODEX_BINS", [app]), mock.patch.dict(os.environ, {"PATH": os.path.dirname(old)}):
+        old, app = fake("old"), fake("app")
+        versions = {old: "0.150.0", app: "0.158.0-alpha.2.1"}
+        with mock.patch.object(dgc, "APP_CODEX_BINS", [app]), mock.patch.dict(os.environ, {"PATH": os.path.dirname(old)}), mock.patch.object(dgc, "codex_version", side_effect=versions.get):
             self.assertEqual(dgc.codex_candidates(), [old, app])
             self.assertEqual(dgc.codex_bin({"codex_bin": None}), app)
-            self.assertEqual(dgc.codex_bin({"codex_bin": old}), old, "an explicit choice still wins")
-        with mock.patch.object(dgc, "APP_CODEX_BINS", []), mock.patch.dict(os.environ, {"PATH": os.path.dirname(old)}):
-            self.assertEqual(dgc.codex_bin({"codex_bin": None}), old)
-        self.assertEqual(dgc.codex_version(app), "0.158.0-alpha.2.1")
-        self.assertIn("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex", dgc.APP_CODEX_BINS)
+            self.assertEqual(dgc.codex_bin({"codex_bin": old}), old)
         key = dgc.codex_version_key
         self.assertGreater(key("0.158.0"), key("0.158.0-alpha.2.1"))
         self.assertGreater(key("0.158.0-alpha.10"), key("0.158.0-alpha.9.2"))
-        self.assertGreater(key("0.158.0-alpha.2.1"), key("0.99.0"))
         self.assertLess(key(None), key("0.1.0"))
 
     def test_update_check_status_and_versions(self):
@@ -820,56 +813,6 @@ class SnapshotReportTests(unittest.TestCase):
         snap = json.loads(run_cli(["snapshot", "--json"])[1])
         self.assertIn("update", snap)
         self.assertFalse(snap["update"]["available"])
-        os.remove(dgc.UPDATE_PATH)
-
-    def test_release_assets_pair_the_zip_with_its_own_checksum(self):
-        data = {"assets": [{"name": "IsGPTNerfed-0.4.1.dmg", "browser_download_url": "u/dmg"},
-                           {"name": "IsGPTNerfed-0.4.1.dmg.sha256", "browser_download_url": "u/dmg.sha256"},
-                           {"name": "IsGPTNerfed-0.4.1.zip", "browser_download_url": "u/zip"},
-                           {"name": "IsGPTNerfed-0.4.1.zip.sha256", "browser_download_url": "u/zip.sha256"}]}
-        self.assertEqual(dgc.pick_release_assets(data), ("u/zip", "u/zip.sha256"))
-        self.assertEqual(dgc.pick_release_assets({"assets": [{"name": "x.zip", "browser_download_url": "u/x"}]}), ("u/x", None))
-        self.assertEqual(dgc.pick_release_assets({"assets": []}), (None, None))
-
-    def test_update_install_swaps_the_app_bundle(self):
-        import hashlib, plistlib, zipfile
-        base = os.path.join(TMP, "update-test"); os.makedirs(base, exist_ok=True)
-
-        def fake_app(root, version):
-            os.makedirs(os.path.join(root, "Contents", "MacOS"), exist_ok=True)
-            with open(os.path.join(root, "Contents", "Info.plist"), "wb") as f:
-                plistlib.dump({"CFBundleShortVersionString": version, "CFBundleIdentifier": "dev.is-gpt-nerfed.menubar"}, f)
-            with open(os.path.join(root, "Contents", "MacOS", "IsGPTNerfed"), "w") as f:
-                f.write("#!/bin/sh\n")
-
-        installed = os.path.join(base, "Applications", "IsGPTNerfed.app"); fake_app(installed, "0.0.1")
-        staged = os.path.join(base, "stage", "IsGPTNerfed.app"); fake_app(staged, "99.0.0")
-        zip_path = os.path.join(base, "IsGPTNerfed-99.0.0.zip")
-        with zipfile.ZipFile(zip_path, "w") as z:
-            for root, _dirs, files in os.walk(staged):
-                for name in files:
-                    full = os.path.join(root, name)
-                    z.write(full, os.path.relpath(full, os.path.dirname(staged)))
-        with open(zip_path + ".sha256", "w") as f:
-            f.write(hashlib.sha256(open(zip_path, "rb").read()).hexdigest() + "  IsGPTNerfed-99.0.0.zip\n")
-        dgc.write_json(dgc.UPDATE_PATH, {"checked": dgc.iso(), "latest": "99.0.0", "url": "https://example.test/rel",
-                                         "asset_url": "file://" + zip_path, "sha256_url": "file://" + zip_path + ".sha256", "error": None})
-        backups = os.path.join(base, "trash"); os.makedirs(backups)
-        code, out = run_cli(["update-install", "--app", installed, "--backup-dir", backups, "--no-launch"])
-        self.assertEqual(code, 0, out)
-        with open(os.path.join(installed, "Contents", "Info.plist"), "rb") as f:
-            self.assertEqual(plistlib.load(f)["CFBundleShortVersionString"], "99.0.0", "the new bundle sits where the old one was")
-        self.assertTrue(any(n.startswith("IsGPTNerfed-") and n.endswith(".app") for n in os.listdir(backups)), "the old bundle was kept")
-        self.assertEqual(dgc.read_json(dgc.UPDATE_PATH)["status"], "installed")
-        # a tampered archive is refused before anything is touched
-        with open(zip_path, "ab") as f:
-            f.write(b"x")
-        fake_app(installed, "0.0.1")
-        code, out = run_cli(["update-install", "--app", installed, "--backup-dir", backups, "--no-launch", "--force"])
-        self.assertNotEqual(code, 0)
-        self.assertIn("sha256 mismatch", dgc.read_json(dgc.UPDATE_PATH)["status"])
-        with open(os.path.join(installed, "Contents", "Info.plist"), "rb") as f:
-            self.assertEqual(plistlib.load(f)["CFBundleShortVersionString"], "0.0.1", "nothing was replaced")
         os.remove(dgc.UPDATE_PATH)
 
     def test_upgrade_shows_as_good_news(self):

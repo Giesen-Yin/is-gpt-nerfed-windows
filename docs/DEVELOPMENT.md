@@ -1,187 +1,91 @@
-# Development notes
+# Windows development requirements
 
-## Layout
+This fork adapts the upstream development guide at commit
+`ff0d7c0c8fdc8713273b6570b1ada1838eaad84c`. The original MIT notice is kept intact.
+For macOS development, use https://github.com/kiyoakii/is-gpt-nerfed.
 
-| path | |
-| --- | --- |
-| `plugin/` | the Codex plugin: `.codex-plugin/plugin.json` (manifest + hooks), `skills/is-gpt-nerfed/` (SKILL.md, `scripts/nerfed`, `codex_appserver.py`, `modeltrace_core.py`, `vendor/`), `assets/` (ModelTrace bank + provenance, logo) |
-| `.agents/plugins/marketplace.json` | makes the repository a local Codex marketplace |
-| `macos/` | SwiftUI menu bar app (macOS 15+, built with the macOS 26 SDK; Liquid Glass where the OS has it). `build.sh --install` / `--run` / `--zip` / `--dmg` / `--release`; the plugin is copied into the bundle so the app can install itself |
-| `bin/nerfed`, `install.sh`, `uninstall.sh` | the CLI wrapper and the plugin-only install |
-| `install-app.sh` | one-line install of the latest release (curl, checksum, no quarantine flag) |
-| `tests/` | unit + offline end-to-end tests with a fake app-server (`fake_codex.py`); `test_parity.py` checks the scorer against ModelTrace's JS core (needs node) |
-| `tools/set_icon.sh` | adopt a 1024×1024 PNG as app icon and plugin logo, rebuild |
+## Layout and scope
 
-`nerfed` is one Python 3.9+ script, standard library only, run by the system `python3`. Nothing is compiled except the app.
+- `plugin/`: CLI (`scripts/nerfed`), stdio app-server client, ModelTrace scorer/bank/provenance, skills, manifest.
+- `.agents/plugins/marketplace.json`: local plugin marketplace; keep source relative to this checkout.
+- `windows/`: Tk UI, translations, Win32 tray, portable build specification and bundle validation.
+- `install.ps1`, `uninstall.ps1`, `bin/nerfed.cmd`: Windows entry points.
+- `tests/`: offline probe integration, scanner, scheduling, visibility, concurrency, UI and JS scorer parity.
+- `LICENSE`, `THIRD_PARTY_NOTICES.md`: preserve upstream and third-party attribution in source and binaries.
 
-```bash
-python3 -m unittest discover -s tests -v
-./bin/nerfed selftest
-./macos/build.sh --install          # needs Xcode 26; the bundle runs on macOS 15+
-NERFED_DEMO=1 ~/Applications/IsGPTNerfed.app/Contents/MacOS/IsGPTNerfed --render docs/panel.png   # README images
+This repository targets Windows 10/11 x64. The standard-library backend remains testable without a GUI;
+no Swift code, DMG installer, macOS self-updater or macOS build toolchain belongs in this fork.
+Use Python 3.11+ with Tk. Runtime GUI dependencies are Python standard library only.
+
+## Preserved upstream contracts
+
+1. Do not change ModelTrace's calibrated zh/en prompts or the bank as part of a platform port.
+   Bank updates must update provenance and retain the MIT license; keep the Python/JS parity tests.
+2. Localize at the presentation layer only. JSON keys, verdict codes, model IDs, reasoning efforts and
+   saved evidence stay unchanged; do not translate real user titles or invent translations for external diagnostics.
+3. Fork probes use a private app-server with `ephemeral: true`; refuse tool/approval requests. Do not
+   substitute random-number generators or another model for actual probe answers.
+4. Match is silent by default. A mismatch requires the existing probability, margin and sample-count gates.
+   Invalid/unlisted samples are not downgrades. Preserve account tagging and older result history.
+5. Hooks must fail open on unexpected errors. Log failures locally. The optional user-enabled halt remains explicit.
+   Do not register/trust hooks in the user’s real home, edit global Codex config or call real inference in automated tests. Native installation acceptance tests must use a disposable CODEX_HOME without copied authentication.
+6. Keep English and Chinese READMEs aligned. Document Windows limitations and distinguish this fork from upstream.
+7. Versions come from the plugin manifest. Backend/client/skill, UI, EXE properties and ZIP must agree.
+   Release tags use `vX.Y.Z`; binaries are unsigned unless a real signing certificate is supplied.
+
+## Windows correctness
+
+- Never use `os.kill(pid, 0)` on Windows; use a query-only process handle.
+- Cross-process session locks must lock/unlock the same fixed byte. Test concurrent writers.
+- Use argument arrays without `shell=True`, explicit UTF-8 JSON-RPC and hidden child consoles.
+- Treat paths as paths: support spaces/non-ASCII text; do not launch Unix npm shims as executables.
+- GUI work stays on the Tk thread. Queue worker/tray events; keep the window visible if tray setup fails.
+- Background mode must offer an explicit Quit; nudge mode must not start inference.
+- Deleted/archived records must not re-enter the default list through the historical ledger.
+- Leave user ledger data intact on ordinary exit/uninstall; purge only when explicitly requested.
+- Do not point the Windows updater at the upstream macOS release assets. Updates are manual here.
+
+## Validation
+
+```powershell
+$env:PYTHONUTF8 = '1'
+python -m unittest discover -s tests -v
+python plugin/skills/is-gpt-nerfed/scripts/nerfed selftest
+python windows/app.py --smoke-test
+python -m pip install -r windows/requirements-build.txt
+.\windows\build.ps1
 ```
 
-## Localization
+`tests/windows_test_support.py` runs the fake Python server through the test interpreter on Windows,
+including background-worker tests. This is test-only adaptation, never a production permission bypass.
+Install Node.js to run parity tests; without Node, unittest reports the parity case skipped.
+Smoke tests use an isolated home, synthetic data, both languages, a resized window, report/settings,
+tray creation, hide/restore and clean exit. They require an interactive Windows desktop.
+`windows/test_bundle.py --bundle <folder>` validates relocated binaries without Python on PATH,
+using isolated config and no model requests. Add `--live` only for an explicitly wanted local account
+read/app-server check; it still does not request inference. Build scripts run the isolated mode.
 
-The macOS presentation layer supports English and Simplified Chinese (`zh-Hans`), using localized
-`Localizable.strings` and `Backend.strings` resources packaged by SwiftPM. English is the development language and fallback.
-The app follows the user's preferred languages; restart the app after changing the system or per-app language.
+Commit source/tests/docs, not build directories, bytecode, logs, auth.json or local account data.
+Keep real inference and notifications out of CI. A passing suite records tested behavior; it does not
+establish that every Codex app-server version or all Windows security policies are compatible.
 
-Keep translations in the presentation layer. Do not translate JSON keys, verdict codes, model IDs, configuration
-values, or ModelTrace's calibrated probe prompts. Localize app-generated evidence, diagnostics and progress text
-at presentation time, retaining their original stored values. CLI output and plugin notifications are unchanged.
-Unknown external messages must remain readable instead of disappearing or being assigned a different verdict.
-Translate synthetic demo titles only when `snapshot.demo` is true; never translate a user's real session title.
 
-When adding a language, add both matching string tables under its `.lproj` directory with the same keys and compatible
-format placeholders, and list the locale in `CFBundleLocalizations` in `macos/Info.plist`. Extend the backend template
-translator for that language; it currently preserves English and unsupported languages verbatim. Reasoning identifiers
-such as `high`, `xhigh` and `max` must remain unchanged in all languages.
-Test both SwiftPM execution and the assembled `.app`: the release bundle needs the SwiftPM
-resource bundle as well as the executable. Check the panel, expanded report and settings at their existing width
-and type scale, using synthetic data (`NERFED_DEMO=1`). Set `NERFED_HOME` to a temporary directory and `NERFED_BIN`
-to the checkout's CLI for these previews, because even `snapshot --demo` writes a ledger and CLI path hint.
+## In-app integration (0.5.7)
 
-The English and [Simplified Chinese README](../README.zh-CN.md) should describe the same behavior; command names,
-configuration keys and URLs stay unchanged in translations.
+`windows_integration.py` stages a version/content-addressed private runtime and generated local marketplace, then uses
+`codex plugin marketplace add` / `codex plugin add`. It uses `hooks/list` for definitions and `config/batchWrite` for explicit
+trust, matching the upstream client. The official [app-server API overview](https://learn.chatgpt.com/docs/app-server#api-overview)
+marks plugin/install as under development, so installation stays on the native CLI path.
 
-## How Codex runs the plugin
+Hook launch commands are fixed ASCII PowerShell EncodedCommand wrappers. Inside, literal paths are quoted, UTF-8 bytes
+are forwarded through redirected streams, and the bundled backend owns hook semantics. Do not add a Python-on-PATH dependency.
+Missing interpreters/scripts and unexpected launcher or backend startup failures exit 0. Intentional user-enabled halts remain expressed through the original stdout JSON denial, not a process error code. Trust only exact generated definitions.
+Keep old runtime directories for in-flight hooks. Never rewrite an entire user config to roll back unrelated configuration.
 
-- `codex plugin add` copies the plugin to `~/.codex/plugins/cache/is-gpt-nerfed/is-gpt-nerfed/<version>/` and exports
-  `PLUGIN_ROOT` (that path) to hook commands, so hooks run the cached copy. After changing code, copy the changed
-  files into the cache or run `./install.sh`. When the manifest version changes, Codex Desktop re-caches on its own and
-  drops the old version directory; `~/.codex/is-gpt-nerfed/plugin` is kept as a stable fallback path for the hooks.
-- Hook trust: Codex silently skips hooks it has not been told to trust. Trust is a per-definition hash under
-  `[hooks.state."<hook key>"]` in `~/.codex/config.toml`, written through the app-server's `config/batchWrite`, the same
-  call the Codex TUI's `/hooks` screen makes (`nerfed hooks status` / `nerfed hooks trust`). The hash covers the hook
-  command, so changing a command needs re-trusting; `install.sh` does that.
-- A non-zero exit from a hook (argparse's exit 2 included) makes Codex block the user's turn. The hook entry point
-  therefore never exits non-zero, and the shell wrapper exits 0 when `python3` or the script is missing. A hook that
-  crashes is recorded in `~/.codex/is-gpt-nerfed/errors.log` and nowhere else.
 
-## Probes
+## Source/release documentation checks
 
-- `codex_appserver.py` talks JSON-RPC to a private `codex app-server --stdio` (hooks and notifications disabled in that
-  process): `thread/read`, `thread/turns/list`, `thread/fork` with `ephemeral: true` at the newest finished turn,
-  `turn/start` per fork, collect the final agent message. Server-initiated requests (approvals) are refused.
-- A session whose newest turn is live cannot be forked at that turn (`identifies an in-progress turn`); the previous
-  finished turn is used, else the probe waits up to `busy_wait_s` (600 s) and reports a retryable Invalid.
-- One automatic retry on transport failures. A fork that has not answered within `probe_timeout_s` (300 s) is
-  replaced once (`topped_up` in the record), so that a slow model does not drop out of the sample. A Suspicious
-  verdict stands until the next probe; `confirm_uncertain` (off by default) adds one more round of three answers.
-- Verdict gate (`mismatch_confidence` 0.8): Mismatch needs p(top) ≥ 0.8, p(declared) ≤ 0.2, a fused z-score margin
-  ≥ 0.5σ (ModelTrace's calibrated softmax amplifies small gaps) and at least two answers (one answer is calibrated
-  at 95.5 %).
-- Fresh-session probe: `thread/start` with `ephemeral: true`, no history.
-- The desktop's `/side` is a `thread/fork` too, with whatever model its picker is set to; the probe forks with the
-  parent's model and effort. Whether the two requests are byte-identical cannot be checked: the desktop's fork
-  parameters are not logged, and Codex never logs request bodies.
-- The desktop also starts ephemeral helper threads of its own (its suggestions generator: "Generate 0 to 3
-  hyperpersonalized suggestions…") on gpt-5.6-terra. They fire the hooks like any session; the ledger files them
-  as `side` because they have no rollout, and the panel never lists them. They are not side chats.
-- Every request Codex makes carries an originator (the desktop app: `Codex Desktop`; the CLI: `codex_cli_rs`); a
-  session started through the app-server would carry the client's `clientInfo` name instead. The probe process sets
-  `CODEX_INTERNAL_ORIGINATOR_OVERRIDE` to the probed session's originator (or the binary's owner for fresh probes),
-  so the service sees the same client. `probe_originator` and `--originator` override it for A/B tests.
-- The zh and en prompts are ModelTrace's own texts, verbatim. Its bank was enrolled under twelve unnamed conditions and
-  its author calls other languages uncalibrated, so the prompt language is not a user setting (`languages` stays as a
-  config key).
-
-## Passive scanner
-
-Reads the session's rollout JSONL incrementally on every Stop hook.
-
-| finding | severity | trigger |
-| --- | --- | --- |
-| `silent_model_change` | hard / good | `turn_context.model` changed with no `thread_settings_applied`: hard for a downgrade, good for a confident upgrade, soft otherwise |
-| `applied_model_change` | soft / good | the same change applied through thread settings: soft for a downgrade ("was that you?"), good for an upgrade |
-| `silent_effort_change`, `applied_effort_change` | hard / soft | reasoning effort dropped, silently or through settings |
-| `hidden_model` | hard | a model with `visibility=hide` in `models_cache.json` ran a turn |
-| `context_window_change` | hard | `token_count.info.model_context_window` shrank |
-| `service_tier_change` | info | priority tier dropped |
-
-Only the latest change per dimension (model, effort, context window, tier) is active; a reverted change stays in the
-log and the report. `compare_models` decides whether a model switch is an upgrade or a downgrade from these signals,
-most trusted first: the catalog's successor pointer (`upgrade` in `models_cache.json`), hidden internal models, the
-generation in the slug (gpt-5.6 → gpt-6, claude-opus-4-7 → 4-8), the size tier in the slug (nano,
-mini/spark/lite/small/flash, plain, pro/ultra), the catalog's ranking (`priority`), the highest supported reasoning
-effort, and the context window. Each answer carries a confidence, and only upgrades with high or medium confidence
-are reported.
-
-`token_count.rate_limits` is not the bucket a turn was charged to and says nothing about the model that answered:
-Codex parses one snapshot per limit family from the response headers in alphabetical order (`codex`, then e.g.
-`codex_bengalfox`, the GPT-5.3-Codex-Spark allowance) and persists the last one. The bucket a turn was charged to is
-in the server's `x-codex-active-limit` header, and no header names the model that answered, so the fingerprint is the
-only measurement of that. The scanner reads `rate_limits` only for the "at the usage limit" label, and only from the
-unnamed default family.
-
-## Ledger (`~/.codex/is-gpt-nerfed/`)
-
-| file | |
-| --- | --- |
-| `log.jsonl` | activity log, one JSON object per line: `account_switch`, `probe_due`, `worker_spawn`, `probe_start`, `probe_round` (per-fork model/effort/tier/timing/usage), `probe_wait`, `probe_retry`, `probe_verdict` (candidate list), `scan_finding`, `hooks_trust`, `config_set`, `status_change`, `update_check`, `error`. `nerfed log --since 2h --kind probe_verdict --json` |
-| `probes/*.json`, `probes.jsonl` | full probe records (every fork's answer text) and the index |
-| `sessions/*.json` | per-session schedule state, evidence, alerts |
-| `events.jsonl` | raw hook event metadata |
-| `account.json`, `hooks_status.json`, `state.json`, `update.json` | last seen account, cached hook trust, last panel status, last release check |
-
-The app also logs to the unified log (Console.app, subsystem `is-gpt-nerfed`).
-
-## Full configuration
-
-| key | default | |
-| --- | --- | --- |
-| `frequency` | `30m` | `Nm`, `Nh` (of activity), `turns:N`, `manual` |
-| `fresh_frequency` | `manual` | `Nm`, `Nh`, `manual` |
-| `mode` | `auto` | `auto` / `nudge` |
-| `queries` | `3` | forks per probe, 1–3 |
-| `parallel` | `true` | forks run concurrently |
-| `languages` | `zh,en` | prompt language pool (ModelTrace's texts) |
-| `passive` | `true` | rollout scan on every turn |
-| `notify`, `notify_on_ok` | `true`, `false` | macOS notifications |
-| `announce_ok` | `false` | push Match verdicts into the session |
-| `sound` | `true` | Codex notification sound on a downgrade |
-| `halt_on_mismatch` | `false` | deny work tools after a mismatch until `nerfed resume` |
-| `mismatch_confidence` | `0.8` | verdict gate |
-| `confirm_uncertain` | `false` | second round when Suspicious |
-| `probe_timeout_s` | `300` | seconds a fork may take; a timed-out fork is replaced once |
-| `busy_wait_s` | `600` | how long to wait for a live turn |
-| `hide_titles` | `false` | screenshot mode |
-| `check_updates` | `true` | ask GitHub for a newer release every 10 minutes |
-| `codex_bin` | auto | path to the codex binary (auto: the newest one on PATH or inside the ChatGPT/Codex app) |
-
-## Release
-
-```bash
-./macos/build.sh --zip && ./macos/build.sh --dmg        # dist/IsGPTNerfed-<version>.{zip,dmg} + .sha256
-gh release create v<version> dist/IsGPTNerfed-<version>.* --title <version>
-```
-
-The tag must be `vX.Y.Z` and the release must not be marked pre-release, because the app and `install-app.sh` read
-`releases/latest`. The app checks every
-10 minutes (`nerfed update-check`, state in `update.json`) and shows "vX.Y.Z is out · update" in the footer, one
-notification per version. Clicking it runs `nerfed update-install` detached: download the zip, verify its sha256, stop
-the app, move the old bundle to the Trash, put the new one in place, strip quarantine, relaunch. A failed check is
-silent; a failed install shows "Update failed · retry". Codex also accepts the repository as a git marketplace
-(`codex plugin marketplace add kiyoakii/is-gpt-nerfed`, `codex plugin add is-gpt-nerfed@is-gpt-nerfed`).
-
-### Signing and notarization
-
-Not done yet. It needs an Apple Developer Program membership, and an individual's certificate carries their legal
-name. Until then the app is ad-hoc signed; `install-app.sh` and the self-updater avoid the Gatekeeper block, and a
-browser download needs System Settings → Privacy & Security → Open Anyway. With a Developer ID:
-
-1. Xcode → Settings → Accounts → Manage Certificates → + → **Developer ID Application**;
-   `security find-identity -v -p codesigning` then lists it.
-2. `xcrun notarytool store-credentials nerfed-notary --apple-id <email> --team-id <TEAMID> --password <app-specific password>`.
-3. `SIGN_IDENTITY="Developer ID Application: Name (TEAMID)" NOTARY_PROFILE=nerfed-notary ./macos/build.sh --release`
-   signs (hardened runtime, timestamp), notarizes and staples the zip and the dmg; `spctl -a -vv` must end with
-   `source=Notarized Developer ID`.
-
-## Limits and contributions
-
-Windows and Linux are untested. The Python is portable, but notifications and the app are macOS-only. Codex's
-app-server protocol is marked experimental; `nerfed doctor --fork` checks the fork path against the installed Codex
-without running inference. Contributions that would help most: new detection signals, bank updates from upstream
-ModelTrace (keep `provenance.json` accurate), and Windows or Linux support. Keep the panel to its type scale (17 / 13 /
-11) and without icons.
+Keep the Added / Changed / Removed / Preserved summaries in both READMEs aligned and link CHANGELOG.md.
+Release packaging copies bilingual READMEs, the changelog, documentation and required attribution files with relative paths intact.
+`tests/test_repository_docs.py` checks links in both the checkout and a copied release-doc tree.
+The upstream review and Windows-specific adaptations are recorded in [UPSTREAM_REVIEW.md](UPSTREAM_REVIEW.md).

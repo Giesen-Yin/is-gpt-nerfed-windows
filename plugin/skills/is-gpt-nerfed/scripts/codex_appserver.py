@@ -18,7 +18,7 @@ import threading
 import time
 import uuid
 
-CLIENT_INFO = {"name": "is-gpt-nerfed", "version": "0.5.3"}
+CLIENT_INFO = {"name": "is-gpt-nerfed", "version": "0.5.8"}
 FINISHED_TURN = ("completed", "interrupted", "failed")
 MESSAGE_ITEMS = ("userMessage", "agentMessage", "reasoning", "hookPrompt")
 
@@ -64,8 +64,11 @@ class AppServer:
         args = [codex_bin, "app-server", "--stdio", "-c", "notify=[]"]
         if not hooks_enabled:
             args += ["-c", "features.hooks=false"]
+        # Codex app-server speaks UTF-8 even when the Windows console locale is GBK.
+        # Without an explicit encoding, a non-ASCII JSON diagnostic kills the reader thread.
         self.proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL, env=environ, text=True, bufsize=1)
+                                     stderr=subprocess.DEVNULL, env=environ, text=True,
+                                     encoding="utf-8", errors="replace", bufsize=1)
         self._write_lock = threading.Lock()
         self._cond = threading.Condition()
         self._next_id = 0
@@ -173,6 +176,9 @@ class AppServer:
                 self.proc.wait(timeout=3)
             except Exception:
                 pass
+        self._reader.join(timeout=3)
+        if not self._reader.is_alive() and self.proc.stdout:
+            self.proc.stdout.close()
 
 
 # -- thread helpers -----------------------------------------------------------------------------
@@ -438,7 +444,9 @@ def hook_belongs_to(hook: dict, plugin_name: str) -> bool:
     pid = str(hook.get("pluginId") or "")
     if pid == plugin_name or pid.startswith(plugin_name + "@"):
         return True
-    return f"/{plugin_name}/" in str(hook.get("sourcePath") or "") or f"/{plugin_name}/scripts/" in str(hook.get("command") or "")
+    source = str(hook.get("sourcePath") or "").replace("\\", "/")
+    command = str(hook.get("command") or "").replace("\\", "/")
+    return f"/{plugin_name}/" in source or f"/{plugin_name}/scripts/" in command
 
 
 def list_plugin_hooks(codex_bin: str, plugin_name: str) -> dict:

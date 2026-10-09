@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CORE = os.path.join(ROOT, "plugin", "skills", "is-gpt-nerfed", "scripts", "modeltrace_core.py")
@@ -71,7 +72,7 @@ class ParityTests(unittest.TestCase):
         tmp = tempfile.mkdtemp(prefix="dgc-parity-")
         runner = os.path.join(tmp, "runner.mjs")
         with open(runner, "w") as f:
-            f.write(RUNNER % json.dumps("file://" + JS_CORE))
+            f.write(RUNNER % json.dumps(Path(JS_CORE).as_uri()))
         cases_path = os.path.join(tmp, "cases.json")
         with open(cases_path, "w") as f:
             json.dump(cases, f)

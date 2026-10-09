@@ -1,7 +1,5 @@
-Vendored third-party code (no package installs required by the plugin).
+# Upstream dependency attribution
 
-| file | project | version | license |
-| --- | --- | --- | --- |
-| `simple_term_menu.py` | [simple-term-menu](https://github.com/IngoMeyer441/simple-term-menu) by Ingo Meyer | 1.6.6 | MIT (`LICENSE-simple-term-menu.txt`) |
-
-Used for the interactive thread picker in `nerfed probe now`.
+The upstream CLI used simple-term-menu (MIT), https://github.com/IngoMeyer441/simple-term-menu.
+The Windows fork replaces it with a standard-library numbered selector. Its Unix terminal implementation
+is no longer shipped. The original MIT license is retained here for upstream dependency attribution.

@@ -1,8 +1,36 @@
+# Generated binaries, packages and build intermediates
+/dist/
+/build/
+.build/
+*.exe
+*.dll
+*.zip
+*.sha256
+*.spec.tmp
+
+# Interpreter caches and local environments
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
 .DS_Store
 *.tmp
-.build/
-macos/build/
-macos/.build/
-dist/
+
+# Local state, diagnostics, credentials and signing material
+.codex/
+windows-runtime/
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+auth.json
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.pfx
+*.p12
