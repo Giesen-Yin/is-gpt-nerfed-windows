@@ -94,6 +94,29 @@ class IntegrationTests(unittest.TestCase):
             self.assertIn(['codex.exe','plugin','marketplace','add','C:/old'],calls)
             self.assertEqual(json.loads(path.read_text(encoding='utf8')),previous)
 
+    def test_marketplace_source_switch_and_restore_use_native_remove_add(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m=module(tmp)
+            current=['C:/old']
+            calls=[]
+            def run(command,**kw):
+                calls.append(command[1:])
+                if command[1:4]==['plugin','marketplace','remove']:
+                    current[0]=None
+                if command[1:4]==['plugin','marketplace','add']:
+                    if current[0] and current[0]!=command[4]:
+                        return 1,'already added from a different source'
+                    current[0]=command[4]
+                return 0,'ok'
+            wi=m.windows_integration
+            with patch.object(wi,'marketplace_source',side_effect=lambda _:current[0]), patch.object(m,'run',side_effect=run):
+                wi.replace_marketplace(m,'codex.exe','C:/new',[])
+                self.assertEqual(current[0],'C:/new')
+                wi.replace_marketplace(m,'codex.exe','C:/old',[])
+                self.assertEqual(current[0],'C:/old')
+            self.assertEqual(calls,[['plugin','marketplace','remove',m.MARKETPLACE_NAME],['plugin','marketplace','add','C:/new'],
+                                    ['plugin','marketplace','remove',m.MARKETPLACE_NAME],['plugin','marketplace','add','C:/old']])
+
     def test_ui_preserves_structured_failure_output(self):
         backend=Backend()
         with patch.object(backend,'run',return_value='{"ok":false,"error":"failed","logs":["details"]}') as run:

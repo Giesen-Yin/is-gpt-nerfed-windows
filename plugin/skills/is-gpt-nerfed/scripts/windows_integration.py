@@ -220,6 +220,20 @@ def checked_run(m, cb, args, logs):
     return output
 
 
+def marketplace_source(m):
+    path = Path(m.CODEX_HOME)/'config.toml'
+    config = tomllib.loads(path.read_text(encoding='utf8')) if path.exists() else {}
+    return ((config.get('marketplaces') or {}).get(m.MARKETPLACE_NAME) or {}).get('source')
+
+
+def replace_marketplace(m, cb, source, logs):
+    """Codex rejects replacing a named source in place; use its native remove/add pair."""
+    current = marketplace_source(m)
+    if current and os.path.normcase(os.path.normpath(str(current))) != os.path.normcase(os.path.normpath(str(source))):
+        checked_run(m, cb, ['plugin','marketplace','remove',m.MARKETPLACE_NAME], logs)
+    checked_run(m, cb, ['plugin','marketplace','add',str(source)], logs)
+
+
 def install(m, trust=False):
     cfg = m.load_config()
     cb = m.codex_bin(cfg)
@@ -238,7 +252,7 @@ def install(m, trust=False):
     receipt = Path(m.NERFED_HOME)/'windows-install.json'
     previous_receipt = m.read_json(str(receipt))
     try:
-        checked_run(m, cb, ['plugin','marketplace','add',staged['marketplace']], logs)
+        replace_marketplace(m, cb, staged['marketplace'], logs)
         # Codex may retain the same-version cache; native uninstall/reinstall refreshes it.
         if old_plugin is not None:
             checked_run(m, cb, ['plugin','remove',selector], logs)
@@ -267,7 +281,7 @@ def install(m, trust=False):
         rollback = []
         try:
             if old_market.get('source'):
-                checked_run(m, cb, ['plugin','marketplace','add',str(old_market['source'])], rollback)
+                replace_marketplace(m, cb, str(old_market['source']), rollback)
                 if old_plugin is not None:
                     m.run([cb,'plugin','remove',selector])
                     checked_run(m, cb, ['plugin','add',selector], rollback)

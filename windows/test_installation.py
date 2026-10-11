@@ -58,7 +58,16 @@ with isolated_home() as tmp:
     before=run('status')['status']
     assert before['manual_probe_available'] and not before['plugin_enabled']
     results['first_run_without_hooks']='PASS: manual probing available'
+    # Reproduce migration from the former source-checkout installation.
+    legacy=Path(tmp)/'legacy marketplace'
+    shutil.copytree(ROOT/'plugin',legacy/'plugin',ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
+    (legacy/'.agents/plugins').mkdir(parents=True)
+    shutil.copy2(ROOT/'.agents/plugins/marketplace.json',legacy/'.agents/plugins/marketplace.json')
+    for command in ([str(cb),'plugin','marketplace','add',str(legacy)], [str(cb),'plugin','add','is-gpt-nerfed@is-gpt-nerfed']):
+        native=subprocess.run(command,env=env,capture_output=True,text=True,encoding='utf8',errors='replace',timeout=90)
+        assert native.returncode==0,native.stdout+native.stderr
     installed=run('install')
+    results['legacy_source_migration']='PASS: existing named marketplace switched through native remove/add'
     assert installed['status']['plugin_enabled']
     assert installed['status']['standalone']
     assert installed['status']['hooks']['total']==5
