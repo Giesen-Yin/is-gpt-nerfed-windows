@@ -37,6 +37,8 @@ For source use, install Python 3.11+ including Tk, then run:
 
 The GUI lists recent conversations from the local Codex database. Search by title/model/ID and click **Probe** to test a selected conversation through an ephemeral fork; no chat skill invocation is needed. Click a card for its report. Deleted or archived conversations are hidden by default; enable their display in Settings to inspect retained history. Deleted/unavailable records cannot be probed.
 
+Session titles are shown as previews of at most 160 characters; the full titles in Codex are left unchanged. This prevents unusually large prompt-sized titles from freezing the interface.
+
 ## Settings and background behavior
 
 - Switch **Simplified Chinese / English** in Settings; saving changes updates the UI. User titles, model IDs, reasoning identifiers, stored evidence and external diagnostics remain unchanged.

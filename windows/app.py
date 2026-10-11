@@ -25,6 +25,12 @@ GREEN, RED, AMBER = '#26b95a', '#ff424c', '#ef921f'
 FRONTEND_VERSION = json.loads((ROOT / 'plugin/.codex-plugin/plugin.json').read_text(encoding='utf-8'))['version']
 
 
+def display_title(value):
+    """Also protect Tk when an older backend or saved snapshot supplies unbounded titles."""
+    text = str(value or '')
+    return text if len(text) <= 160 else text[:159].rstrip() + '…'
+
+
 def probe_label(probe, language='zh'):
     if not probe:
         return tr(language, 'no_probe'), MUTED
@@ -302,7 +308,7 @@ class Panel(tk.Tk):
             elif action == 'reminder' and time.monotonic()-self.nudged.get(sid, -100000) > 900:
                 self.nudged[sid] = time.monotonic()
                 row = next(t for t in self.snap['threads'] if t['id'] == sid)
-                text = self.t('reminder') + ' ' + row.get('title', sid)
+                text = self.t('reminder') + ' ' + display_title(row.get('title', sid))
                 self.last_message = text
                 self.task('reminder', lambda text=text: self.backend.run(['pet', 'say', text]))
 
@@ -388,7 +394,7 @@ class Panel(tk.Tk):
             body.pack(side='left', fill='x', expand=True)
             label, color = probe_label(row.get('last_probe'), self.language)
             if row.get('alert'): color = RED
-            lines = [(row.get('title') or row['id'], INK, True),
+            lines = [(display_title(row.get('title') or row['id']), INK, True),
                      (f"{row.get('model') or self.t('unknown_model')} @ {row.get('effort') or self.t('default')} · {self.t('turns', n=row.get('turns',0))} · {backend_text(row.get('updated_ago'), self.language)}", MUTED, False),
                      ((self.t('running') + ' · ' + (backend_text(row.get('probe_note'), self.language) or self.t('collecting'))) if running else label, color, False)]
             for flag, key in [('archived','archived'),('unavailable','unavailable'),('halted','halted'),('last_failure','last_failed')]:
@@ -412,7 +418,7 @@ class Panel(tk.Tk):
 
     def details(self, key):
         row = next((r for r in self.snap.get('threads', []) if r['id']==key), {}) if key else {}
-        title = row.get('title') if key else self.t('fresh')
+        title = display_title(row.get('title')) if key else self.t('fresh')
         probes = row.get('probes') or [] if key else self.snap.get('global_probes') or []
         report = self.t('report') + ' · ' + (title or '') + '\n\n' + self.t('history') + '\n'
         report += '\n'.join(probe_label(p,self.language)[0] + '\n  ' + json.dumps(p.get('results') or [],ensure_ascii=False) for p in probes) if probes else self.t('no_report')
@@ -548,6 +554,9 @@ def main():
             nonlocal smoke_ok
             if app.loading and time.monotonic()<deadline: app.after(100,check); return
             if not app.snap.get('threads'): app.quit_app(); return
+            # Regression: full prompt-sized titles must never reach Tk's text layout.
+            app.snap['threads'][0]['title'] = '多语言 long title 🧪 ' * 70000
+            app.snap['threads'][1]['title'] = '第二个 long title ' * 70000
             for language in ('zh','en'):
                 app.language=language; app.build_ui(); app.geometry('680x640'); app.update()
                 app.details(app.snap['threads'][0]['id']); app.settings(); app.integration_dialog(); app.update_idletasks()

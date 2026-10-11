@@ -2229,6 +2229,12 @@ def cmd_snapshot(args) -> int:
     return 0
 
 
+def snapshot_title(value) -> str:
+    """Bound display metadata; Codex can store an entire large prompt as a title."""
+    text = str(value or "")
+    return text if len(text) <= 160 else text[:159].rstrip() + "…"
+
+
 def build_snapshot(cfg: dict, hours: float = 48.0) -> dict:
     acct = note_account("snapshot")
     migrate_untagged_records(acct["id"])
@@ -2239,7 +2245,7 @@ def build_snapshot(cfg: dict, hours: float = 48.0) -> dict:
     for row in db_recent_threads_detailed(int(cutoff * 1000), include_archived=show_inactive):
         threads[row["id"]] = {
             "archived": bool(row.get("archived")), "unavailable": False,
-            "id": row["id"], "title": (row.get("name") or row.get("title") or (row.get("preview") or "").strip()[:70] or row["id"][:12]),
+            "id": row["id"], "title": snapshot_title(row.get("name") or row.get("title") or (row.get("preview") or "").strip()[:70] or row["id"][:12]),
             "cwd": row.get("cwd"), "model": row.get("model"), "effort": row.get("reasoning_effort"),
             "updated_ts": (row.get("updated_at_ms") or 0) / 1000.0, "turns": 0, "turns_since_probe": 0, "due": False,
             "probe_running": False, "halted": False, "requested": False, "hard_evidence": 0, "soft_evidence": 0, "last_evidence": None,
@@ -2264,7 +2270,7 @@ def build_snapshot(cfg: dict, hours: float = 48.0) -> dict:
         t["archived"] = bool(row and row.get("archived"))
         t["unavailable"] = row is None
         if row:
-            t["title"] = row.get("name") or row.get("title") or t["title"]
+            t["title"] = snapshot_title(row.get("name") or row.get("title") or t["title"])
         t["updated_ts"] = max(t["updated_ts"], upd)
         t["model"] = (st.get("scan") or {}).get("model") or t.get("model") or st.get("model")
         t["effort"] = (st.get("scan") or {}).get("effort") or t.get("effort")

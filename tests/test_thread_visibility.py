@@ -24,6 +24,8 @@ class VisibilityTests(unittest.TestCase):
                 con.execute('CREATE TABLE threads (' + ','.join(c + (' INTEGER' if c in ('archived','updated_at_ms') else ' TEXT') for c in columns) + ', preview TEXT)')
                 for sid, archived, age in [('live',0,0),('archived',1,0),('archived_without_ledger',1,0),('old_live',0,72*3600)]:
                     con.execute('INSERT INTO threads (id,title,archived,updated_at_ms) VALUES (?,?,?,?)', (sid,sid,archived,int((m.now()-age)*1000)))
+                huge_title = 'Title 测试 ' * 130000
+                con.execute('UPDATE threads SET title=? WHERE id IN (?,?)',(huge_title,'live','archived_without_ledger'))
             con.close()
             for sid in ('live','archived','deleted','old_live'):
                 st=m.new_session(sid)
@@ -34,12 +36,20 @@ class VisibilityTests(unittest.TestCase):
                 self.assertFalse(cfg['show_inactive_threads'])
                 visible=m.build_snapshot(cfg)['threads']
                 self.assertEqual({t['id'] for t in visible}, {'live','old_live'})
+                live=next(t for t in visible if t['id']=='live')
+                self.assertLessEqual(len(live['title']),160)
+                self.assertTrue(live['title'].endswith('…'))
+                self.assertLess(len(live['report_text']),2000)
+                with sqlite3.connect(Path(tmp)/'state_1.sqlite') as original:
+                    self.assertEqual(original.execute('SELECT title FROM threads WHERE id=?',('live',)).fetchone()[0],huge_title)
+                original.close()
                 cfg['show_inactive_threads']=m.coerce_config_value('show_inactive_threads','true')
                 m.save_config(cfg)
                 self.assertTrue(m.load_config()['show_inactive_threads'])
                 all_rows={t['id']:t for t in m.build_snapshot(m.load_config())['threads']}
                 self.assertEqual(set(all_rows), {'live','old_live','archived','archived_without_ledger','deleted'})
                 self.assertTrue(all_rows['archived']['archived'])
+                self.assertLessEqual(len(all_rows['archived_without_ledger']['title']),160)
                 self.assertTrue(all_rows['deleted']['unavailable'])
                 cfg['show_inactive_threads']=m.coerce_config_value('show_inactive_threads','false')
                 m.save_config(cfg)

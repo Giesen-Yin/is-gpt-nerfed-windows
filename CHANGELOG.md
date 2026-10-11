@@ -1,5 +1,12 @@
 # Windows fork changes
 
+## 0.5.3-windows — startup responsiveness fix (2026-10-11)
+
+- Bound displayed session titles to 160 characters in both snapshot generation and the Windows UI. Prompt-sized database titles no longer block Tk layout; stored Codex titles are not modified.
+- Cover long titles in lists, reports/window captions and reminder text, including older snapshots.
+- Include the previously verified marketplace source-migration fix and its regression coverage.
+- 84 offline tests and the packaged UI/icon checks pass.
+
 ## 0.5.3-windows — icon refresh (2026-10-09)
 
 - Use the original project chip face (`docs/face-ok.png`) for the window, taskbar, tray and EXE instead of platform/Python defaults.

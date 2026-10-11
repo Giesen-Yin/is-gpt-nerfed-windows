@@ -8,9 +8,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'windows'))
-from app import Backend, probe_label
+from app import Backend, probe_label, display_title
 
 class PanelBackendTests(unittest.TestCase):
+    def test_large_titles_are_bounded_and_normal_titles_preserved(self):
+        ordinary='A real title with 中文 and 🧪'
+        self.assertEqual(display_title(ordinary),ordinary)
+        large='Multilingual title 中文 🧪 ' * 60000
+        self.assertLessEqual(len(display_title(large)),160)
+        self.assertTrue(display_title(large).endswith('…'))
+        self.assertEqual(len(large),len('Multilingual title 中文 🧪 ') * 60000)
+
     def test_selected_thread_is_passed_without_a_shell(self):
         backend = Backend()
         with patch('app.subprocess.run', return_value=subprocess.CompletedProcess([], 0, 'done', '')) as call:

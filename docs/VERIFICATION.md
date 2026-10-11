@@ -1,3 +1,15 @@
+# Windows startup responsiveness fix — 2026-10-11
+
+- Read-only inspection found two session titles of 1,046,530 characters each; no title content is included in this report or public fixtures.
+- Before the fix, replaying the real snapshot in an isolated, non-probing GUI failed to service a 1.5-second UI timer within 15 seconds.
+- Truncating only display titles restored responsiveness. After the fix, the same unmodified input snapshot serviced the timer in 2.07 seconds (including startup).
+- Current backend snapshot size fell from 4,241,682 to 56,188 characters; observed read time was 0.43 seconds after the fix.
+- 84 offline tests passed; synthetic megabyte-title GUI/report tests and portable executable icon/control tests passed.
+- Database preservation is covered by a temporary SQLite fixture: the original large title remains intact after snapshot generation.
+- Tests started no real model inference. The fix does not require changing installed hooks or clearing user data.
+
+## Earlier verification
+
 # Windows 0.5.8 review verification
 
 Verified on Windows x64, Python 3.13.13, native Codex 0.162.0-alpha.2, 2026-10-09.
