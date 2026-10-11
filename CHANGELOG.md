@@ -1,5 +1,10 @@
 # Windows fork changes
 
+## 0.5.3-windows — compact session titles (2026-10-11)
+
+- Reduce session title previews to at most 32 characters, including the ellipsis, in both the backend and Windows UI. Original Codex titles remain unchanged.
+- Verify the 32/33-character boundary for English, Chinese and emoji titles.
+
 ## 0.5.3-windows — startup responsiveness fix (2026-10-11)
 
 - Bound displayed session titles to 160 characters in both snapshot generation and the Windows UI. Prompt-sized database titles no longer block Tk layout; stored Codex titles are not modified.

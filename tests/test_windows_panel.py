@@ -14,8 +14,11 @@ class PanelBackendTests(unittest.TestCase):
     def test_large_titles_are_bounded_and_normal_titles_preserved(self):
         ordinary='A real title with 中文 and 🧪'
         self.assertEqual(display_title(ordinary),ordinary)
+        for char in ('a', '中', '🧪'):
+            self.assertEqual(display_title(char * 32), char * 32)
+            self.assertEqual(display_title(char * 33), char * 31 + '…')
         large='Multilingual title 中文 🧪 ' * 60000
-        self.assertLessEqual(len(display_title(large)),160)
+        self.assertLessEqual(len(display_title(large)),32)
         self.assertTrue(display_title(large).endswith('…'))
         self.assertEqual(len(large),len('Multilingual title 中文 🧪 ') * 60000)
 

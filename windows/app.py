@@ -28,7 +28,7 @@ FRONTEND_VERSION = json.loads((ROOT / 'plugin/.codex-plugin/plugin.json').read_t
 def display_title(value):
     """Also protect Tk when an older backend or saved snapshot supplies unbounded titles."""
     text = str(value or '')
-    return text if len(text) <= 160 else text[:159].rstrip() + '…'
+    return text if len(text) <= 32 else text[:31].rstrip() + '…'
 
 
 def probe_label(probe, language='zh'):

@@ -18,6 +18,9 @@ class VisibilityTests(unittest.TestCase):
                 spec = importlib.util.spec_from_loader('visibility_backend', importlib.machinery.SourceFileLoader('visibility_backend', path))
                 m = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(m)
+            for char in ('a', '中', '🧪'):
+                self.assertEqual(m.snapshot_title(char * 32), char * 32)
+                self.assertEqual(m.snapshot_title(char * 33), char * 31 + '…')
             m.ensure_dirs()
             columns = [c.strip() for c in m.THREAD_COLS.split(',')]
             with sqlite3.connect(Path(tmp) / 'state_1.sqlite') as con:
@@ -37,7 +40,7 @@ class VisibilityTests(unittest.TestCase):
                 visible=m.build_snapshot(cfg)['threads']
                 self.assertEqual({t['id'] for t in visible}, {'live','old_live'})
                 live=next(t for t in visible if t['id']=='live')
-                self.assertLessEqual(len(live['title']),160)
+                self.assertLessEqual(len(live['title']),32)
                 self.assertTrue(live['title'].endswith('…'))
                 self.assertLess(len(live['report_text']),2000)
                 with sqlite3.connect(Path(tmp)/'state_1.sqlite') as original:
@@ -49,7 +52,7 @@ class VisibilityTests(unittest.TestCase):
                 all_rows={t['id']:t for t in m.build_snapshot(m.load_config())['threads']}
                 self.assertEqual(set(all_rows), {'live','old_live','archived','archived_without_ledger','deleted'})
                 self.assertTrue(all_rows['archived']['archived'])
-                self.assertLessEqual(len(all_rows['archived_without_ledger']['title']),160)
+                self.assertLessEqual(len(all_rows['archived_without_ledger']['title']),32)
                 self.assertTrue(all_rows['deleted']['unavailable'])
                 cfg['show_inactive_threads']=m.coerce_config_value('show_inactive_threads','false')
                 m.save_config(cfg)

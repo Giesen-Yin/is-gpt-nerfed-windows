@@ -2232,7 +2232,7 @@ def cmd_snapshot(args) -> int:
 def snapshot_title(value) -> str:
     """Bound display metadata; Codex can store an entire large prompt as a title."""
     text = str(value or "")
-    return text if len(text) <= 160 else text[:159].rstrip() + "…"
+    return text if len(text) <= 32 else text[:31].rstrip() + "…"
 
 
 def build_snapshot(cfg: dict, hours: float = 48.0) -> dict:
